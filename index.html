@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Task Pulse</title>
+<style>
+  :root{
+    --bg:#13161d; --surface:#1a1f29; --surface-2:#1f2530; --line:#2a313d; --line-soft:#222936;
+    --text:#e8ebf1; --muted:#8a93a6; --faint:#586073;
+    --accent:#f5a524;           /* 今 — 署名の琥珀 */
+    --done:#46d27f; --prog:#5aa0f2; --todo:#5c6678; --late:#f4707a;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, "JetBrains Mono", monospace;
+    --ui: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Helvetica Neue", system-ui, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0; height:100%}
+  body{
+    background:var(--bg); color:var(--text); font-family:var(--ui);
+    -webkit-font-smoothing:antialiased; font-size:14px; line-height:1.45;
+    height:100dvh; display:flex; flex-direction:column; overflow:hidden;
+  }
+  .wrap{width:100%; max-width:600px; margin:0 auto; display:flex; flex-direction:column; height:100%}
+
+  /* ---------- header / pulse ---------- */
+  .phead{
+    flex:0 0 auto; padding:14px 16px 12px; background:var(--surface);
+    border-bottom:1px solid var(--line);
+  }
+  .prow1{display:flex; align-items:baseline; justify-content:space-between; gap:10px}
+  .pname{font-size:15px; font-weight:650; letter-spacing:.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .ptoday{font:12px/1 var(--mono); color:var(--accent); flex:0 0 auto}
+  .pbar{height:6px; border-radius:99px; background:var(--surface-2); margin:10px 0 7px; overflow:hidden}
+  .pbar > i{display:block; height:100%; background:linear-gradient(90deg,#3f7fd0,#5aa0f2); border-radius:99px}
+  .prow2{display:flex; justify-content:space-between; font-size:12px; color:var(--muted)}
+  .prow2 b{color:var(--text); font:600 12px/1 var(--mono)}
+  .sched .behind{color:var(--late)} .sched .ahead{color:var(--done)} .sched .ontrack{color:var(--prog)}
+
+  .tools{display:flex; gap:8px; margin-top:11px}
+  .btn{font:inherit; font-size:12px; color:var(--text); background:var(--surface-2);
+       border:1px solid var(--line); border-radius:7px; padding:6px 10px; cursor:pointer}
+  .btn:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  .btn.primary{background:#243042; border-color:#33455e}
+
+  /* ---------- stream ---------- */
+  .stream{flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:6px 14px 40px}
+  .stream.drag{outline:2px dashed var(--accent); outline-offset:-8px; border-radius:14px}
+
+  .seclabel{
+    display:flex; align-items:center; gap:8px; color:var(--muted); font-size:11px;
+    letter-spacing:.06em; margin:16px 2px 8px; cursor:default; user-select:none;
+  }
+  .seclabel .ln{flex:1 1 auto; height:1px; background:var(--line-soft)}
+  .seclabel.click{cursor:pointer}
+  .seclabel .cnt{font:11px/1 var(--mono); color:var(--faint)}
+
+  /* 今 horizon — 署名 */
+  .nowline{position:relative; margin:18px 0 12px; display:flex; align-items:center; gap:10px}
+  .nowline::before, .nowline::after{content:""; height:2px; flex:1 1 auto; background:var(--accent); box-shadow:0 0 8px rgba(245,165,36,.5)}
+  .nowtag{font:600 12px/1 var(--mono); color:#1b150a; background:var(--accent); padding:4px 9px; border-radius:99px; white-space:nowrap}
+
+  /* progress overview */
+  .poview{background:var(--surface); border:1px solid var(--line-soft); border-radius:12px; padding:12px 14px; margin:10px 0 4px}
+  .poview h3{margin:0 0 6px; font-size:11px; color:var(--muted); letter-spacing:.06em; font-weight:600}
+  .prog-row{margin:9px 0}
+  .prog-row .top{display:flex; justify-content:space-between; align-items:baseline; gap:8px}
+  .prog-row .pn{font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .prog-row .pv{flex:0 0 auto; font:12px/1 var(--mono); color:var(--muted)}
+  .prog-row .pbar2{height:6px; border-radius:99px; background:var(--surface-2); overflow:hidden; margin-top:6px}
+  .prog-row .pbar2 > i{display:block; height:100%; border-radius:99px; background:var(--prog); transition:width .4s ease}
+  .prog-row.full{margin-top:6px; padding-top:11px; border-top:1px solid var(--line-soft)}
+  .prog-row.full .pn{font-weight:650; font-size:14px}
+  .prog-row.full .pv{color:var(--text)}
+  .prog-row.full .pbar2 > i{background:linear-gradient(90deg,#3f7fd0,#5aa0f2)}
+
+  /* cards */
+  .card{
+    position:relative; display:flex; gap:0; background:var(--surface);
+    border:1px solid var(--line-soft); border-radius:11px; margin:8px 0; overflow:hidden;
+  }
+  .card .stripe{flex:0 0 4px; background:var(--todo)}
+  .card.s-done .stripe{background:var(--done)} .card.s-prog .stripe{background:var(--prog)}
+  .card.s-late .stripe{background:var(--late)} .card.s-todo .stripe{background:var(--todo)}
+  .card .cbody{flex:1 1 auto; padding:10px 13px; min-width:0}
+  .eyebrow{font-size:11px; color:var(--muted); letter-spacing:.02em; margin-bottom:2px;
+           overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .eyebrow .ph{color:var(--prog)}
+  .ctitle{font-size:15px; font-weight:600; line-height:1.3; word-break:break-word}
+  .cmeta{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; font:12px/1.2 var(--mono); color:var(--muted)}
+  .cmeta .ok{color:var(--done)} .cmeta .warn{color:var(--late)}
+
+  .card.s-done{opacity:.62}
+  .card.s-done .ctitle{font-weight:500}
+  .card.s-prog{border-color:#33455e; box-shadow:inset 3px 0 0 -1px rgba(90,160,242,.0), 0 0 0 1px rgba(90,160,242,.12)}
+  .card.s-late{border-color:#5a3338}
+
+  .pdot{width:8px; height:8px; border-radius:50%; background:var(--prog); flex:0 0 auto}
+  .pdot.live{box-shadow:0 0 0 0 rgba(90,160,242,.6); animation:pulse 1.8s ease-out infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(90,160,242,.5)} 70%{box-shadow:0 0 0 7px rgba(90,160,242,0)} 100%{box-shadow:0 0 0 0 rgba(90,160,242,0)}}
+
+  .mini{flex:0 0 auto; display:flex; align-items:center; gap:6px}
+  .mini .track{width:54px; height:5px; border-radius:99px; background:var(--surface-2); overflow:hidden}
+  .mini .track > i{display:block; height:100%; background:var(--prog); border-radius:99px}
+  .mini .pct{font:11px/1 var(--mono); color:var(--text)}
+
+  .chip{font:11px/1 var(--mono); color:var(--muted); background:var(--surface-2); border:1px solid var(--line-soft); border-radius:6px; padding:3px 6px}
+
+  .empty{margin:40px 6px; text-align:center; color:var(--muted)}
+  .empty code{font:12px/1.6 var(--mono); color:var(--text); background:var(--surface-2); padding:2px 6px; border-radius:5px}
+
+  .stream{animation:fadein .4s ease both}
+  @keyframes fadein{from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none}}
+  @media (prefers-reduced-motion: reduce){ *{animation:none!important; transition:none!important} }
+
+  input[type=file]{display:none}
+  .paste{padding:0 16px; background:var(--surface); border-bottom:1px solid var(--line); display:none}
+  .paste.open{display:block; padding:12px 16px}
+  .paste textarea{width:100%; height:120px; resize:vertical; background:var(--bg); color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:10px; font:12px/1.5 var(--mono)}
+  .paste .prow{display:flex; gap:8px; margin-top:8px; align-items:center}
+  .paste .hint{color:var(--muted); font-size:11px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="phead">
+    <div class="prow1"><span class="pname" id="pname">—</span><span class="ptoday" id="ptoday"></span></div>
+    <div class="pbar"><i id="pbar" style="width:0%"></i></div>
+    <div class="prow2"><span>進捗 <b id="ppct">0%</b></span><span class="sched" id="psched"></span></div>
+    <div class="tools">
+      <button class="btn" id="btnSample">サンプル</button>
+      <button class="btn" id="btnPaste">貼り付け</button>
+      <label class="btn primary" for="file">ファイルを開く</label>
+      <input id="file" type="file" accept=".md,.markdown,.csv,.txt,.tsv">
+    </div>
+  </header>
+
+  <div class="paste" id="pastePanel">
+    <textarea id="ta" spellcheck="false" placeholder="markdownのパイプ表を貼り付け（| No | タスク | 工数 | 担当 | 予定開始 | 予定終了 | 実績開始 | 実績終了 | 状態 | 備考 |）"></textarea>
+    <div class="prow">
+      <button class="btn primary" id="btnApply">反映</button>
+      <span class="hint">日付 YYYY-MM-DD・Noの階層(1/1.1)で親=フェーズタグ・工数=人日</span>
+    </div>
+  </div>
+
+  <div class="stream" id="stream"></div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = s => document.querySelector(s);
+
+  // ===== sample（= このツール自身のロードマップ）=====
+  const SAMPLE = [
+    "| No | タスク | 工数 | 担当 | 予定開始 | 予定終了 | 実績開始 | 実績終了 | 状態 | 備考 |",
+    "|----|--------|-----:|------|----------|----------|----------|----------|------|------|",
+    "| 1   | WBS可視化ツール          |     | ゆいた | 2026-06-14 | 2026-07-05 | 2026-06-14 |            | 進行中 |     |",
+    "| 1.1 | 今ライン縦フローUI       | 1   | Claude | 2026-06-12 | 2026-06-14 | 2026-06-12 | 2026-06-14 | 完了   | #1  |",
+    "| 1.2 | markdownパーサ           | 0.5 | Claude | 2026-06-13 | 2026-06-14 | 2026-06-13 |            | 進行中 |     |",
+    "| 1.3 | 進捗ロールアップ         | 0.5 | Claude | 2026-06-14 | 2026-06-16 |            |            | 未着手 |     |",
+    "| 2   | どこからでも(P2)         |     | ゆいた | 2026-06-16 | 2026-06-24 |            |            | 未着手 |     |",
+    "| 2.1 | GitHub Pages公開         | 0.5 | ゆいた | 2026-06-16 | 2026-06-17 |            |            | 未着手 |     |",
+    "| 2.2 | 台帳URL fetch配線        | 1   | Claude | 2026-06-17 | 2026-06-19 |            |            | 未着手 |     |",
+    "| 2.3 | Drive Worker GET口       | 2   | Claude | 2026-06-19 | 2026-06-24 |            |            | 未着手 |     |",
+    "| 3   | 差別化・品質(P3)         |     | ゆいた | 2026-06-24 | 2026-07-05 |            |            | 未着手 |     |",
+    "| 3.1 | 折り畳み・絞り込み       | 1   | Claude | 2026-06-24 | 2026-06-26 |            |            | 未着手 |     |",
+    "| 3.2 | ブラウザ編集             | 3   | Claude | 2026-06-26 | 2026-07-02 |            |            | 未着手 |     |",
+    "| 3.3 | 仕上げ                   | 1   | Claude | 2026-07-02 | 2026-07-05 |            |            | 未着手 |     |",
+  ].join("\n");
+
+  // ===== date utils =====
+  const parseDate = s => { if(!s) return null;
+    const m = String(s).trim().match(/(\d{4})\D(\d{1,2})\D(\d{1,2})/); if(!m) return null;
+    return new Date(+m[1], +m[2]-1, +m[3], 12); };
+  const dayMs = 86400000;
+  const diffDays = (a,b) => Math.round((b-a)/dayMs);
+  const fmtMD = d => (d.getMonth()+1)+"/"+d.getDate();
+  const today = (()=>{ const n=new Date(); return new Date(n.getFullYear(),n.getMonth(),n.getDate(),12); })();
+  const WD = ["日","月","火","水","木","金","土"];
+
+  // ===== parser（前版と同一エンジン）=====
+  const HEAD_MAP = {
+    no:["no","番号","#"], task:["タスク","作業項目","作業","項目","名称"],
+    effort:["工数","人日"], owner:["担当","assignee","owner"],
+    ps:["予定開始","計画開始"], pe:["予定終了","計画終了"], as:["実績開始"], ae:["実績終了"],
+    status:["状態","ステータス","status"], note:["備考","メモ","note"],
+  };
+  const norm = s => String(s||"").trim().toLowerCase().replace(/\s+/g,"");
+  const matchCol = h => { const n=norm(h);
+    for(const k in HEAD_MAP) if(HEAD_MAP[k].some(a=>norm(a)===n||n.includes(norm(a)))) return k; return null; };
+  function parse(text){
+    const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.startsWith("|"));
+    if(lines.length<2) return [];
+    const cut = l => l.replace(/^\||\|$/g,"").split("|").map(c=>c.trim());
+    const headers = cut(lines[0]).map(matchCol);
+    let rows = lines.slice(1);
+    if(rows.length && /^[\s:|-]+$/.test(rows[0].replace(/\|/g,""))) rows = rows.slice(1);
+    const out=[];
+    for(const ln of rows){ const c=cut(ln), o={}; headers.forEach((k,i)=>{ if(k) o[k]=c[i]??""; });
+      if(!o.no && !o.task) continue;
+      out.push({ no:(o.no||"").trim(), task:o.task||"", effort:o.effort||"", owner:o.owner||"",
+        ps:parseDate(o.ps), pe:parseDate(o.pe), as:parseDate(o.as), ae:parseDate(o.ae),
+        status:(o.status||"").trim(), note:o.note||"" }); }
+    return out;
+  }
+
+  const numEffort = s => { const n=parseFloat(String(s).replace(/[^\d.]/g,"")); return isNaN(n)?null:n; };
+  const isParent = (t,all) => all.some(x=>x!==t && x.no.startsWith(t.no+"."));
+  function dispStatus(t){
+    if(/完了|done|✓|✔/i.test(t.status)) return "done";
+    if(t.pe && t.pe<today && !/完了|done|✓/i.test(t.status)) return "late";
+    if(/進行|doing|wip/i.test(t.status) || (t.as && !t.ae)) return "prog";
+    return "todo";
+  }
+  const topPhase = (no,all) => { const r=no.split(".")[0]; const p=all.find(x=>x.no===r);
+    return (p && p.no!==no) ? p.task : ""; };
+
+  let TASKS=[]; let doneOpen=false;
+
+  function render(){
+    const stream=$("#stream"); stream.innerHTML="";
+    if(!TASKS.length){
+      stream.innerHTML='<div class="empty">表が見つかりません。<br>「ファイルを開く」か「貼り付け」で <code>| No | タスク | 工数 | … |</code> 形式のmarkdown表を渡してください。</div>';
+      head([]); return;
+    }
+    const leaves = TASKS.filter(t=>!isParent(t,TASKS));
+    const g = {done:[],late:[],prog:[],todo:[]};
+    for(const t of leaves) g[dispStatus(t)].push(t);
+    g.done.sort((a,b)=>( (b.ae||b.pe||today) - (a.ae||a.pe||today) ));
+    g.late.sort((a,b)=>((a.pe||today)-(b.pe||today)));
+    g.prog.sort((a,b)=>((a.as||a.ps||today)-(b.as||b.ps||today)));
+    g.todo.sort((a,b)=>((a.ps||today)-(b.ps||today)));
+
+    head(leaves);
+
+    stream.appendChild(progressView(leaves));
+
+    // 過去（完了）— 折り畳み
+    if(g.done.length){
+      const lab=document.createElement("div"); lab.className="seclabel click";
+      lab.innerHTML='<span>完了</span><span class="cnt">'+g.done.length+'</span><span class="ln"></span><span class="cnt">'+(doneOpen?"隠す":"表示")+'</span>';
+      lab.onclick=()=>{ doneOpen=!doneOpen; render(); };
+      stream.appendChild(lab);
+      if(doneOpen) g.done.forEach(t=>stream.appendChild(card(t,"done")));
+    }
+
+    // 今 horizon
+    const nl=document.createElement("div"); nl.className="nowline";
+    nl.innerHTML='<span class="nowtag">今 · '+fmtMD(today)+' ('+WD[today.getDay()]+')</span>';
+    stream.appendChild(nl);
+
+    // 遅延（今あるべきなのに未完）
+    if(g.late.length){
+      stream.appendChild(seclabel("遅延", g.late.length));
+      g.late.forEach(t=>stream.appendChild(card(t,"late")));
+    }
+    // 進行中
+    if(g.prog.length){
+      stream.appendChild(seclabel("進行中", g.prog.length));
+      g.prog.forEach(t=>stream.appendChild(card(t,"prog")));
+    }
+    // これから
+    if(g.todo.length){
+      stream.appendChild(seclabel("これから", g.todo.length));
+      g.todo.forEach(t=>stream.appendChild(card(t,"todo")));
+    }
+  }
+
+  function seclabel(text,n){ const d=document.createElement("div"); d.className="seclabel";
+    d.innerHTML='<span>'+text+'</span><span class="cnt">'+n+'</span><span class="ln"></span>'; return d; }
+
+  function card(t,kind){
+    const el=document.createElement("div"); el.className="card s-"+kind;
+    const phase=topPhase(t.no,TASKS); const eff=numEffort(t.effort);
+    const eye=[ phase?('<span class="ph">'+esc(phase)+'</span>'):"", eff?(eff+'人日'):"", t.owner?esc(t.owner):"" ]
+              .filter(Boolean).join(' · ');
+
+    let meta="";
+    if(kind==="done"){
+      const s=t.as||t.ps, e=t.ae||t.pe;
+      meta='<span class="ok">✓ '+(s?fmtMD(s):"")+(e?'–'+fmtMD(e):"")+'</span>';
+    } else if(kind==="prog"){
+      const rem = t.pe?diffDays(today,t.pe):null;
+      meta='<span class="pdot live"></span>実績 '+(t.as?fmtMD(t.as):"–")+'〜'+(t.pe?' ・予定〜'+fmtMD(t.pe):"");
+      if(rem!=null) meta+=' <span class="chip">'+(rem>0?'残'+rem+'日':(rem===0?'今日まで':''))+'</span>';
+    } else if(kind==="late"){
+      const od = t.pe?diffDays(t.pe,today):0;
+      meta='<span class="warn">予定〜'+(t.pe?fmtMD(t.pe):"–")+' 超過'+(od>0?' ・'+od+'日遅れ':"")+'</span>';
+    } else {
+      const rel = t.ps?diffDays(today,t.ps):null;
+      meta='予定 '+(t.ps?fmtMD(t.ps):"–")+(t.pe?'–'+fmtMD(t.pe):"");
+      if(rel!=null && rel>0) meta+=' <span class="chip">あと'+rel+'日</span>';
+    }
+
+    el.innerHTML='<span class="stripe"></span><div class="cbody">'+
+      (eye?'<div class="eyebrow">'+eye+'</div>':"")+
+      '<div class="ctitle">'+esc(t.task)+'</div>'+
+      '<div class="cmeta">'+meta+'</div></div>';
+    return el;
+  }
+
+  function progressView(leaves){
+    const wrap=document.createElement("div"); wrap.className="poview"; let html='<h3>進捗</h3>';
+    const roots = TASKS.filter(t=>!t.no.includes("."));
+    let gT=0,gD=0;
+    for(const r of roots){
+      const ds = leaves.filter(l=> l.no===r.no || l.no.startsWith(r.no+"."));
+      const total = ds.reduce((s,t)=>s+(numEffort(t.effort)??0),0);
+      const done = ds.filter(t=>dispStatus(t)==="done").reduce((s,t)=>s+(numEffort(t.effort)??0),0);
+      gT+=total; gD+=done;
+      html += progRow(false, r.task, total?Math.round(done/total*100):0, done, total);
+    }
+    html += progRow(true, "全体", gT?Math.round(gD/gT*100):0, gD, gT);
+    wrap.innerHTML = html; return wrap;
+  }
+  function progRow(full,name,pct,done,total){
+    const fmt=n=>(n%1?n.toFixed(1):n);
+    return '<div class="prog-row'+(full?' full':'')+'">'+
+      '<div class="top"><span class="pn">'+esc(name)+'</span><span class="pv">'+pct+'% · '+fmt(done)+'/'+fmt(total)+'人日</span></div>'+
+      '<div class="pbar2"><i style="width:'+pct+'%"></i></div></div>';
+  }
+  function head(leaves){
+    const roots = TASKS.filter(t=>!t.no.includes("."));
+    $("#pname").textContent = roots.length===1 ? roots[0].task : (roots.length||0)+" プロジェクト";
+    $("#ptoday").textContent = "今日 "+fmtMD(today);
+    const total = leaves.reduce((s,t)=>s+(numEffort(t.effort)??0),0);
+    const done = leaves.filter(t=>dispStatus(t)==="done").reduce((s,t)=>s+(numEffort(t.effort)??0),0);
+    const sched = leaves.filter(t=>t.pe&&t.pe<=today).reduce((s,t)=>s+(numEffort(t.effort)??0),0);
+    const pct = total?Math.round(done/total*100):0;
+    const spct = total?Math.round(sched/total*100):0;
+    $("#pbar").style.width = pct+"%";
+    $("#ppct").textContent = pct+"%";
+    const diff = pct - spct;
+    let tag;
+    if(!total) tag="";
+    else if(diff <= -3) tag='予定 '+spct+'% ・ <span class="behind">'+Math.abs(diff)+'%遅れ</span>';
+    else if(diff >= 3) tag='予定 '+spct+'% ・ <span class="ahead">'+diff+'%前倒し</span>';
+    else tag='予定 '+spct+'% ・ <span class="ontrack">順調</span>';
+    $("#psched").innerHTML = tag;
+  }
+  const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+  function load(text){ TASKS=parse(text); doneOpen=false; render(); }
+
+  // controls
+  $("#file").addEventListener("change",e=>{ const f=e.target.files[0]; if(!f) return;
+    const r=new FileReader(); r.onload=()=>load(r.result); r.readAsText(f); });
+  const stream=$("#stream");
+  ["dragover","dragenter"].forEach(ev=>stream.addEventListener(ev,e=>{e.preventDefault(); stream.classList.add("drag");}));
+  ["dragleave","drop"].forEach(ev=>stream.addEventListener(ev,e=>{e.preventDefault(); if(ev!=="drop"||!stream.contains(e.relatedTarget)) stream.classList.remove("drag");}));
+  stream.addEventListener("drop",e=>{ const f=e.dataTransfer.files[0]; if(!f) return;
+    const r=new FileReader(); r.onload=()=>load(r.result); r.readAsText(f); });
+  $("#btnPaste").addEventListener("click",()=>$("#pastePanel").classList.toggle("open"));
+  $("#btnApply").addEventListener("click",()=>{ const v=$("#ta").value.trim(); if(v) load(v); $("#pastePanel").classList.remove("open"); });
+  $("#btnSample").addEventListener("click",()=>{ $("#ta").value=SAMPLE; load(SAMPLE); });
+
+  // ?src=URL fetch（どこからでもの口・既に有効）
+  (async ()=>{
+    const src=new URLSearchParams(location.search).get("src");
+    if(src){ try{ const r=await fetch(src); load(await r.text()); return; }catch(e){} }
+    $("#ta").value=SAMPLE; load(SAMPLE);
+  })();
+})();
+</script>
+</body>
+</html>
