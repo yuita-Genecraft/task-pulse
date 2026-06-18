@@ -113,6 +113,27 @@
   .paste .prow{display:flex; gap:8px; margin-top:8px; align-items:center}
   .paste .hint{color:var(--muted); font-size:11px}
 
+  /* tabs（タスク / ポスト化スタンバイ） */
+  .tabs{display:flex; gap:6px; margin-top:11px}
+  .tab{font:inherit; font-size:12px; color:var(--muted); background:transparent; border:1px solid var(--line);
+    border-radius:7px; padding:6px 12px; cursor:pointer}
+  .tab.on{color:var(--text); background:var(--surface-2); border-color:#33455e}
+  .tab:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  .wrap.v-standby .pbar, .wrap.v-standby .prow2{display:none}  /* スタンバイ時はタスク専用の進捗表示を隠す */
+
+  /* ポスト化スタンバイのカード（＝あとは書くだけの待機列） */
+  .scard{background:var(--surface); border:1px solid var(--line-soft); border-radius:11px; margin:8px 0; padding:12px 14px}
+  .scard .stop{display:flex; align-items:flex-start; justify-content:space-between; gap:10px}
+  .scard .sname{font-size:15px; font-weight:650; line-height:1.3; word-break:break-word}
+  .scard .fresh{flex:0 0 auto; font:11px/1 var(--mono); color:var(--muted); background:var(--surface-2);
+    border:1px solid var(--line-soft); border-radius:6px; padding:4px 7px; white-space:nowrap}
+  .scard .claim{font-size:13px; color:var(--text); line-height:1.55; margin:8px 0 10px}
+  .scard .todo{display:inline-flex; align-items:center; gap:6px; font:600 12px/1.3 var(--ui);
+    border-radius:7px; padding:7px 11px; background:var(--surface-2); color:var(--muted); border:1px solid var(--line-soft)}
+  .scard .todo.ready{color:var(--done); background:rgba(70,210,127,.10); border-color:#1f5a38}  /* 本文化のみ＝今すぐ書ける */
+  .sempty{margin:40px 6px; text-align:center; color:var(--muted)}
+  .sempty code{font:12px/1.6 var(--mono); color:var(--text); background:var(--surface-2); padding:2px 6px; border-radius:5px}
+
   /* ===== PC / 広い画面 ===== */
   @media (min-width: 768px){
     .wrap{ max-width: 960px; }
@@ -128,9 +149,10 @@
     .stream > .poview,
     .stream > .seclabel,
     .stream > .nowline,
-    .stream > .empty{ grid-column: 1 / -1; }
+    .stream > .empty,
+    .stream > .sempty{ grid-column: 1 / -1; }
     /* gapで間隔を作るのでカード個別marginは消す */
-    .stream > .card{ margin: 0; }
+    .stream > .card, .stream > .scard{ margin: 0; }
   }
   @media (min-width: 1200px){
     .wrap{ max-width: 1240px; }
@@ -149,6 +171,10 @@
       <button class="btn" id="btnPaste">貼り付け</button>
       <label class="btn primary" for="file">ファイルを開く</label>
       <input id="file" type="file" accept=".md,.markdown,.csv,.txt,.tsv">
+    </div>
+    <div class="tabs" id="tabs">
+      <button class="tab on" data-view="tasks">タスク</button>
+      <button class="tab" data-view="standby">ポスト化スタンバイ</button>
     </div>
   </header>
 
@@ -248,6 +274,7 @@
     : /開発|実装|コード/.test(p)?"p-dev" : /発信|ポスト|リプ|投稿/.test(p)?"p-post" : "";
 
   let TASKS=[]; let doneOpen=false;
+  let STANDBY=[]; let view="tasks";
 
   function render(){
     const stream=$("#stream"); stream.innerHTML="";
@@ -373,11 +400,71 @@
   }
   const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-  function load(text){ TASKS=parse(text); doneOpen=false; render(); }
+  function load(text){ TASKS=parse(text); doneOpen=false; setView("tasks"); render(); }
+
+  // ===== ポスト化スタンバイ（層B＝あとは書くだけ）。タスクとは別パース・別描画 =====
+  function setView(v){ view=v;
+    document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on", t.dataset.view===v));
+    document.querySelector(".wrap").classList.toggle("v-standby", v==="standby"); }
+  const SHEAD = { name:["ネタ","題材","topic"], claim:["主張","核","要点","claim"],
+    bone:["手元の骨","骨","bone"], todo:["残作業","残り","todo"], fresh:["鮮度","freshness"] };
+  const snorm = s => String(s||"").trim().toLowerCase().replace(/（[^）]*）/g,"").replace(/\([^)]*\)/g,"").replace(/\s+/g,"");
+  const matchStandby = h => { const n=snorm(h);
+    for(const k in SHEAD) if(SHEAD[k].some(a=>snorm(a)===n)) return k;
+    for(const k in SHEAD) if(SHEAD[k].some(a=>n.includes(snorm(a)))) return k; return null; };
+  function parseStandby(text){
+    const lines=text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.startsWith("|"));
+    if(lines.length<2) return [];
+    const cut=l=>l.replace(/^\||\|$/g,"").split("|").map(c=>c.trim());
+    const headers=cut(lines[0]).map(matchStandby);
+    let rows=lines.slice(1);
+    if(rows.length && /^[\s:|-]+$/.test(rows[0].replace(/\|/g,""))) rows=rows.slice(1);
+    const out=[];
+    for(const ln of rows){ const c=cut(ln), o={}; headers.forEach((k,i)=>{ if(k && o[k]==null) o[k]=c[i]??""; });
+      if(!o.name) continue;
+      out.push({ name:o.name||"", claim:o.claim||"", bone:o.bone||"", todo:o.todo||"", fresh:o.fresh||"" }); }
+    return out;
+  }
+  const isReady = s => /本文化のみ|書くだけ|あとは書く/.test(s.todo);
+  function scard(s){
+    const el=document.createElement("div"); el.className="scard"; const ready=isReady(s);
+    el.innerHTML=
+      '<div class="stop"><div class="sname">'+esc(s.name)+'</div>'+
+        (s.fresh?'<span class="fresh">鮮度 '+esc(s.fresh)+'</span>':"")+'</div>'+
+      (s.claim?'<div class="claim">'+esc(s.claim)+'</div>':"")+
+      '<div class="todo'+(ready?" ready":"")+'">'+(ready?"✍️ ":"")+'残作業：'+esc(s.todo||"—")+'</div>';
+    return el;
+  }
+  function renderStandby(){
+    const stream=$("#stream"); stream.innerHTML="";
+    $("#pname").textContent="ポスト化スタンバイ"; $("#ptoday").textContent="今日 "+fmtMD(today);
+    if(!STANDBY.length){
+      stream.innerHTML='<div class="sempty">スタンバイがありません。<br>Drive「00_ポスト化スタンバイ.md」の <code>## スタンバイ一覧</code> を <code>standby.md</code> に反映してください。</div>';
+      return;
+    }
+    const ready=STANDBY.filter(isReady), rest=STANDBY.filter(s=>!isReady(s));
+    if(ready.length){
+      const lab=document.createElement("div"); lab.className="seclabel";
+      lab.innerHTML='<span>書くだけ（本文化のみ）</span><span class="cnt">'+ready.length+'</span><span class="ln"></span>';
+      stream.appendChild(lab); ready.forEach(s=>stream.appendChild(scard(s)));
+    }
+    if(rest.length){
+      const lab=document.createElement("div"); lab.className="seclabel";
+      lab.innerHTML='<span>残作業あり</span><span class="cnt">'+rest.length+'</span><span class="ln"></span>';
+      stream.appendChild(lab); rest.forEach(s=>stream.appendChild(scard(s)));
+    }
+  }
+  function loadStandby(text){ STANDBY=parseStandby(text); if(view==="standby") renderStandby(); }
 
   $("#stream").addEventListener("click", e=>{
     if(e.target.closest("a")) return;
     const c = e.target.closest(".card"); if(c) c.classList.toggle("open");
+  });
+
+  $("#tabs").addEventListener("click", e=>{
+    const b=e.target.closest(".tab"); if(!b) return;
+    setView(b.dataset.view);
+    if(view==="standby") renderStandby(); else render();
   });
 
   $("#file").addEventListener("change",e=>{ const f=e.target.files[0]; if(!f) return;
@@ -390,6 +477,12 @@
   $("#btnPaste").addEventListener("click",()=>$("#pastePanel").classList.toggle("open"));
   $("#btnApply").addEventListener("click",()=>{ const v=$("#ta").value.trim(); if(v) load(v); $("#pastePanel").classList.remove("open"); });
   $("#btnSample").addEventListener("click",()=>{ $("#ta").value=SAMPLE; load(SAMPLE); });
+
+  // ポスト化スタンバイを同オリジンから読む（?standby=URLで上書き可）。タスク読込とは独立に走らせる。
+  (async ()=>{
+    const ssrc=new URLSearchParams(location.search).get("standby") || "standby.md";
+    try{ const r=await fetch(ssrc); if(r.ok){ const t=await r.text(); if(/\|/.test(t)) loadStandby(t); } }catch(e){}
+  })();
 
   (async ()=>{
     const src=new URLSearchParams(location.search).get("src") || "tasks.md"; // 既定で同repoのtasks.mdを読む
