@@ -112,6 +112,30 @@
   .paste textarea{width:100%; height:130px; resize:vertical; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:12px/1.5 var(--mono)}
   .paste .prow{display:flex; gap:8px; margin-top:8px; align-items:center}
   .paste .hint{color:var(--muted); font-size:11px}
+
+  /* ===== PC / 広い画面 ===== */
+  @media (min-width: 768px){
+    .wrap{ max-width: 960px; }
+    .stream{
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      grid-auto-rows: max-content;  /* 固定高さscroll容器＋align-items:start＋カードのoverflow:hidden(min-height:0)で行が21pxに潰れ、カードが重なるのを防ぐ */
+      gap: 8px 14px;
+      align-items:start;     /* 展開カードが隣を引き伸ばさない */
+      align-content:start;
+    }
+    /* 全幅で見せたい要素は1行ぶち抜き */
+    .stream > .poview,
+    .stream > .seclabel,
+    .stream > .nowline,
+    .stream > .empty{ grid-column: 1 / -1; }
+    /* gapで間隔を作るのでカード個別marginは消す */
+    .stream > .card{ margin: 0; }
+  }
+  @media (min-width: 1200px){
+    .wrap{ max-width: 1240px; }
+    .stream{ grid-template-columns: repeat(3, minmax(0,1fr)); }
+  }
 </style>
 </head>
 <body>
