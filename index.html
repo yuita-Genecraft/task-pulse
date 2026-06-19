@@ -478,9 +478,9 @@
   $("#btnApply").addEventListener("click",()=>{ const v=$("#ta").value.trim(); if(v) load(v); $("#pastePanel").classList.remove("open"); });
   $("#btnSample").addEventListener("click",()=>{ $("#ta").value=SAMPLE; load(SAMPLE); });
 
-  // ポスト化スタンバイを同オリジンから読む（?standby=URLで上書き可）。タスク読込とは独立に走らせる。
+  // ポスト化スタンバイは Drive を直読み（drive-snippets Worker の公開GET口 /pub/poststock 経由＝手動ミラー廃止）。?standby=URL で上書き可。
   (async ()=>{
-    const ssrc=new URLSearchParams(location.search).get("standby") || "standby.md";
+    const ssrc=new URLSearchParams(location.search).get("standby") || "https://drive-snippets-mcp.gooooerer.workers.dev/pub/poststock";
     try{ const r=await fetch(ssrc); if(r.ok){ const t=await r.text(); if(/\|/.test(t)) loadStandby(t); } }catch(e){}
   })();
 
