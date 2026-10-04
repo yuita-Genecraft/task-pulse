@@ -22,7 +22,7 @@
   // ---- 見た目（既存の色の変数をそのまま使う） ----
   const css = document.createElement("style");
   css.textContent = `
-  .tg-panel{padding:4px 0 40px}
+  .tg-panel{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:6px 14px 40px}
   .tg-panel[hidden]{display:none}
   .tg-meta{font-size:12px;color:var(--muted);line-height:1.6;margin:6px 2px 10px}
   .tg-meta b{color:var(--text);font-weight:600}
