@@ -4,8 +4,10 @@
 //
 // 守っていること（taskgraf.js と同じ）
 // - 外部の JavaScript は読み込まない。このファイルと index.html だけで描く。
-// - 読むだけの鍵は、ブックマークの URL の # の後ろ（#graph=…・taskgraf と同じ鍵）にだけ置く。localStorage など
-//   どこにも保存しない（github.io の同じ住所の別ページから読めるため）。console にも出さない。
+// - 読むだけの鍵は、ブックマークの URL の # の後ろ（#graph=…・taskgraf と同じ鍵）にだけ置く。このページは鍵を
+//   localStorage などに書かない（github.io の同じ住所の別ページから読めるため）。console にも出さない。
+//   「保存しない」はこの意味だけ：鍵はブックマークと閲覧履歴の URL には入っている（ブラウザの同期を使えばその先にも）。
+//   また、このページと同じ origin の JavaScript からは location.hash で読める。
 // - 鍵は Authorization ヘッダーで、固定の送り先にだけ送る（送り先は差し替えられない）。
 // - タブを開くたびと「更新」を押した時に取り直す（キャッシュしない）。取得時刻を出す。
 // - データは textContent でだけ入れる（文字列の innerHTML は使わない）。
@@ -16,9 +18,11 @@
 //
 // メモと「外す／戻す」（2026-10-08）
 // - 書くのは、書き込み専用の鍵（# の後ろの &write=…）がある時だけ。読む鍵（graph）では書かない。
-//   書き込みの鍵も保存しない・console に出さない・固定の送り先にだけ Authorization ヘッダーで送る。
-// - メモは handoff に置く（1チャットに1つ・500字まで）。保存の時は、表示した時のメモの時刻を一緒に送る。
-//   その間に別の所（チャットなど）で書き換わっていたら、handoff は 409 を返して上書きしない。
+//   書き込みの鍵も、このページは localStorage などに書かず、console に出さず、固定の送り先にだけ Authorization ヘッダーで
+//   送る（ブックマーク・履歴の URL に入ること、同じ origin から読めることは、読む鍵と同じ）。
+// - メモは handoff に置く（1チャットに1つ・500字まで）。保存の時は、表示した時のメモの時刻と本文を組で送る。
+//   今のメモがその組と違えば（チャットなど別の所で書き換わっていたら）、handoff は 409 を返して上書きしない。
+//   時刻だけでは比べない：別の書き手が同じミリ秒で書くと、時刻は同じで本文だけが違う（code critic 1回目・2026-10-08）。
 // - メモの中の URL は、決めた場所（chatgpt.com など）の https だけをリンクにする。ほかは文字のまま。
 // - 「外す」は一覧から外すだけ（claude.ai のチャットは消えない）。2回押した時だけ外れる。外した行は「戻す」で戻せる。
 (() => {
@@ -145,7 +149,7 @@
     if (!panel.hidden) void refresh();
   });
 
-  // ---- 鍵：# の後ろからだけ読む。保存しない（読む鍵＝graph、書き込みの鍵＝write） ----
+  // ---- 鍵：# の後ろからだけ読む。このページは localStorage などに書かない（読む鍵＝graph、書き込みの鍵＝write） ----
   function readKeys() {
     const h = location.hash.replace(/^#/, "");
     const p = new URLSearchParams(h);
@@ -341,7 +345,8 @@
   function openEditor(c, memoBox, edBox, memoBtn, say) {
     if (edBox.firstChild) return;
     tell(say, "");
-    let base = c.memo_updated_at; // 表示した時のメモ（handoff はこれと違えば上書きしない）
+    // 表示した時のメモ＝時刻と本文の組（handoff は、今のメモがこの組と違えば上書きしない）
+    let base = { at: c.memo_updated_at, memo: c.memo };
     const ta = el("textarea", "ch-ed");
     ta.value = c.memo || "";
     ta.placeholder = "例：ChatGPT のセカンドオピニオン https://chatgpt.com/…（空にして保存すると消える）";
@@ -369,7 +374,7 @@
       if (save.disabled) return;
       save.disabled = true;
       tell(say, "保存しています…");
-      const res = await write("/chats/memo", "PUT", { url: c.url, memo: ta.value, base_updated_at: base });
+      const res = await write("/chats/memo", "PUT", { url: c.url, memo: ta.value, base_updated_at: base.at, base_memo: base.memo });
       const b = res.body || {};
       if (res.status === 200 && b.ok === true) {
         c.memo = isStr(b.memo) ? b.memo : null;
@@ -383,7 +388,7 @@
         // 別の所で書き換わっていた：今のメモを見せ、書いた文はそのまま残す
         c.memo = isStr(b.memo) ? b.memo : null;
         c.memo_updated_at = isStr(b.memo_updated_at) ? b.memo_updated_at : null;
-        base = c.memo_updated_at;
+        base = { at: c.memo_updated_at, memo: c.memo };
         showMemo(memoBox, c);
         update();
         tell(say, "別の所でメモが書き換わっていました。上が今のメモです。直してから、もう一度保存してください。", true);
