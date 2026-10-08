@@ -114,9 +114,11 @@
   .paste .hint{color:var(--muted); font-size:11px}
 
   /* tabs（タスク / ポスト化スタンバイ） */
-  .tabs{display:flex; gap:6px; margin-top:11px}
+  .tabs{display:flex; gap:6px; margin-top:9px; padding:2px 1px; overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch}
+  .tabs::-webkit-scrollbar{display:none}  /* タブが4つになったので、狭い画面では折り返さず横に送る */
   .tab{font:inherit; font-size:12px; color:var(--muted); background:transparent; border:1px solid var(--line);
-    border-radius:7px; padding:6px 12px; cursor:pointer}
+    border-radius:7px; padding:6px 12px; cursor:pointer; flex:0 0 auto; white-space:nowrap}
+  @media (max-width:420px){ .tab{padding:6px 9px} }
   .tab.on{color:var(--text); background:var(--surface-2); border-color:#33455e}
   .tab:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
   .wrap.v-standby .pbar, .wrap.v-standby .prow2{display:none}  /* スタンバイ時はタスク専用の進捗表示を隠す */
@@ -400,7 +402,11 @@
   }
   const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-  function load(text){ TASKS=parse(text); doneOpen=false; setView("tasks"); render(); }
+  // background＝起動時の自動ロード。届くのが遅れ、その間に別のタブ（スタンバイ・taskgraf・チャット）へ移っていたら、
+  // 表示は奪わずにデータだけ入れる（タスクのタブを押した時に描く）。ファイル・貼り付け・サンプルは従来どおりタスクを出す。
+  function load(text, background){ TASKS=parse(text); doneOpen=false;
+    if(background && view!=="tasks") return;
+    setView("tasks"); render(); }
 
   // ===== ポスト化スタンバイ（層B＝あとは書くだけ）。タスクとは別パース・別描画 =====
   function setView(v){ view=v;
@@ -486,11 +492,12 @@
 
   (async ()=>{
     const src=new URLSearchParams(location.search).get("src") || "tasks.md"; // 既定で同repoのtasks.mdを読む
-    try{ const r=await fetch(src); if(r.ok){ const txt=await r.text(); if(/\|/.test(txt)){ load(txt); return; } } }catch(e){}
-    $("#ta").value=SAMPLE; load(SAMPLE); // tasks.mdが無ければサンプル表示
+    try{ const r=await fetch(src); if(r.ok){ const txt=await r.text(); if(/\|/.test(txt)){ load(txt, true); return; } } }catch(e){}
+    $("#ta").value=SAMPLE; load(SAMPLE, true); // tasks.mdが無ければサンプル表示
   })();
 })();
 </script>
 <script src="taskgraf.js" defer></script>
+<script src="chats.js" defer></script>
 </body>
 </html>
