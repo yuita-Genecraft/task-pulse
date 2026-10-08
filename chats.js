@@ -10,15 +10,16 @@
 // - タブを開くたびと「更新」を押した時に取り直す（キャッシュしない）。取得時刻を出す。
 // - データは textContent でだけ入れる（文字列の innerHTML は使わない）。
 // - リンクにするのは claude.ai のチャット／Claude Code のセッションの形の URL だけ（handoff 側でも同じ形しか入らない）。
-// - 一覧から外れるのは、閉じたと分かったチャットだけ（handoff の規則）。時間が経っただけでは外れない。
+// - 一覧から外れるのは、閉じたと明示に分かったチャットだけ（handoff の規則）。時間が経っただけでは外れない。
+// - 「閉じた人」は呼んだ側の申告で、認証された人ではない（handoff の規則）。画面でも「申告」と出す。
 // - レーンの名前やチャットの URL は、このファイルに書かない（公開 repo のため）。
 (() => {
   "use strict";
   const CHATS_URL = "https://handoff-mcp.gooooerer.workers.dev/chats";
   const VIEW = "chats";
   const UNCAT = "未分類"; // レーンが未設定（null）のチャットをまとめる表示名
-  const CLOSER = { chat: "チャット自身", yuita: "ゆいた", net: "見回り" };
-  const HINT = "閉じたと分かったチャットだけが外れます（時間が経っただけでは外れません）。「最後に動いた」は、登録や見回りが見た最後の時刻です（実際より遅れることがあります）。";
+  const CLOSER = { chat: "チャット自身", yuita: "ゆいた" }; // 申告（認証ではない）
+  const HINT = "閉じたと明示に分かったチャットだけが外れます（時間が経っただけでは外れません）。「最後に動いた」は登録の時に分かった最後の時刻で、実際より遅れることがあります。閉じた人は申告です。";
   const URL_RE =
     /^https:\/\/claude\.ai\/(?:chat\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|code\/session_[A-Za-z0-9]{8,64})$/;
 
@@ -228,7 +229,7 @@
       meta.append(el("span", null, "最後に動いた " + ago(c.last_seen_at, now) + "（" + fmtIso(c.last_seen_at) + "）"));
     } else {
       if (c.project_id !== null) meta.append(el("span", "ch-chip", c.project_id));
-      meta.append(el("span", null, "閉じた " + ago(c.closed_at, now) + "（" + fmtIso(c.closed_at) + "）・" + (CLOSER[c.closed_by] || c.closed_by)));
+      meta.append(el("span", null, "閉じた " + ago(c.closed_at, now) + "（" + fmtIso(c.closed_at) + "）・申告：" + (CLOSER[c.closed_by] || c.closed_by)));
     }
     body.append(meta);
     r.append(body, openLink(c));

@@ -402,7 +402,11 @@
   }
   const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-  function load(text){ TASKS=parse(text); doneOpen=false; setView("tasks"); render(); }
+  // background＝起動時の自動ロード。届くのが遅れ、その間に別のタブ（スタンバイ・taskgraf・チャット）へ移っていたら、
+  // 表示は奪わずにデータだけ入れる（タスクのタブを押した時に描く）。ファイル・貼り付け・サンプルは従来どおりタスクを出す。
+  function load(text, background){ TASKS=parse(text); doneOpen=false;
+    if(background && view!=="tasks") return;
+    setView("tasks"); render(); }
 
   // ===== ポスト化スタンバイ（層B＝あとは書くだけ）。タスクとは別パース・別描画 =====
   function setView(v){ view=v;
@@ -488,8 +492,8 @@
 
   (async ()=>{
     const src=new URLSearchParams(location.search).get("src") || "tasks.md"; // 既定で同repoのtasks.mdを読む
-    try{ const r=await fetch(src); if(r.ok){ const txt=await r.text(); if(/\|/.test(txt)){ load(txt); return; } } }catch(e){}
-    $("#ta").value=SAMPLE; load(SAMPLE); // tasks.mdが無ければサンプル表示
+    try{ const r=await fetch(src); if(r.ok){ const txt=await r.text(); if(/\|/.test(txt)){ load(txt, true); return; } } }catch(e){}
+    $("#ta").value=SAMPLE; load(SAMPLE, true); // tasks.mdが無ければサンプル表示
   })();
 })();
 </script>
