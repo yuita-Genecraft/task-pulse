@@ -489,7 +489,7 @@
     if (b) b.remove();
   }
 
-  // 書き込み：固定の送り先・書き込みの鍵は Authorization ヘッダーだけ・保存しない
+  // 書き込み：固定の送り先・書き込みの鍵は Authorization ヘッダーだけ・このページは localStorage などに書かない
   async function write(path, method, payload) {
     const key = readKeys().write;
     if (!key) return { status: -1, body: null };
