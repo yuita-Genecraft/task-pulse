@@ -106,7 +106,7 @@
   .ch-lsum i{display:inline-block;width:8px;height:8px;border-radius:50%}
   .ch-lsum i.w{background:var(--prog)}
   .ch-lsum i.d{background:var(--done);margin-left:6px}
-  .ch-lsum b{color:var(--text);font:600 12px/1 var(--mono)}
+  .ch-lsum .ch-lnum{color:var(--text);font:600 12px/1 var(--mono)}
   .ch-time.ch-err{color:var(--late)}
   .ch-new{font:11px/1 var(--mono);color:var(--accent)}
   .ch-meta{display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;margin-top:5px;font:11.5px/1.3 var(--mono);color:var(--muted)}
@@ -278,7 +278,8 @@
     const reload = el("button", "ch-reload", "更新");
     reload.type = "button";
     reload.addEventListener("click", () => void refresh());
-    const head = { sum: el("span", "ch-lsum"), work: el("b", null, "0"), wait: el("b", null, "0"), time: el("span", "ch-time"), fresh: el("span", "ch-new") };
+    // 数は b ではなく span（見出しの b は「開いているチャット N 件」の N だけにしておく）
+    const head = { sum: el("span", "ch-lsum"), work: el("span", "ch-lnum", "0"), wait: el("span", "ch-lnum", "0"), time: el("span", "ch-time"), fresh: el("span", "ch-new") };
     head.sum.append(el("i", "w"), "作業中 ", head.work, el("i", "d"), "完了待機 ", head.wait);
     l1.append(count, head.sum, el("span", "ch-time", "取得 " + fmt(now)), head.time, head.fresh, reload);
     bar.append(l1);
