@@ -27,8 +27,11 @@
 // - 「外す」は一覧から外すだけ（claude.ai のチャットは消えない）。2回押した時だけ外れる。外した行は「戻す」で戻せる。
 //
 // ランプ（2026-10-09・ゆいた：どのチャットも作業時間が長いので、出力が終わった行にランプを点けたい。できれば作業中と完了待機を分けたい）
-// - 各行の題の左に丸いランプ。青の点滅＝作業中／緑＝完了待機（その回の出力が終わって返事待ち）／灰色の輪＝作業中のまま
+// - 各行の題の左に丸いランプ。青の点滅＝作業中／緑＝完了待機（作業を終えて返事待ち）／灰色の輪＝作業中のまま
 //   LAMP_STALE_MS を過ぎた（止まったかも）／薄い輪＝ランプの記録なし。色だけに頼らず、行の下の文字でも状態を書く。
+//   見出しに 作業中・完了待機・止まったかも の数（止まったかもは1件以上の時だけ）。
+// - 緑は書き終わりより少し早い（チャットは最後の返事の前に done を呼ぶ）。ツールを使わない回はチャットが呼ばないので、
+//   ランプも時刻も前のまま（2026-10-09 のセカンドオピニオンで明示。画面のヒントにも書く）。
 // - ランプは handoff の lamp / lamp_at（チャット自身が set_chat_lamp で点ける申告）。観測ではないので、点け忘れ・途中で止まった時は
 //   前の状態のまま残る。このページは読むだけ（ランプを書く口は無い）。
 // - この画面が見えている間だけ、LAMP_POLL_MS ごとに GET /chats を読み直し、ランプと時刻だけを描き直す（行の増減・題・メモは
@@ -54,7 +57,7 @@
   const LAMP_STATES = ["working", "done"]; // handoff の chat_lamp と同じ
   const LAMP_WORD = { working: "作業中", done: "完了待機", stale: "作業中のまま" };
   const LAMP_HINT =
-    "ランプ：青の点滅＝作業中／緑＝完了待機（出力が終わって返事待ち）／灰色の輪＝2時間以上「作業中」のまま（止まったかも）。各チャットが自分で点けるので、点け忘れはあり得ます。見えている間は30秒ごとにランプだけ更新（行の増減・メモは「更新」で）。";
+    "ランプ（各チャットの申告）：青の点滅＝作業中／緑＝完了待機（最後の返事を書く直前に点くので、書き終わりより数十秒〜1分早いことがある）／灰色の輪＝2時間以上「作業中」のまま（止まったかも）。ツールを使わない短い返事では変わらず、点け忘れもあり得ます。見えている間は30秒ごとにランプだけ更新（行の増減・メモは「更新」で）。";
   const VIEW = "chats";
   const UNCAT = "未分類"; // レーンが未設定（null）のチャットをまとめる表示名
   const CLOSER = { chat: "チャット自身", yuita: "ゆいた" }; // 申告（認証ではない）
@@ -107,6 +110,9 @@
   .ch-lsum i.w{background:var(--prog)}
   .ch-lsum i.d{background:var(--done);margin-left:6px}
   .ch-lsum .ch-lnum{color:var(--text);font:600 12px/1 var(--mono)}
+  .ch-lstale{display:inline-flex;align-items:center;gap:5px}
+  .ch-lstale[hidden]{display:none}
+  .ch-lsum i.s{box-sizing:border-box;border:1.5px solid var(--muted);margin-left:6px}
   .ch-time.ch-err{color:var(--late)}
   .ch-new{font:11px/1 var(--mono);color:var(--accent)}
   .ch-meta{display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;margin-top:5px;font:11.5px/1.3 var(--mono);color:var(--muted)}
@@ -279,8 +285,17 @@
     reload.type = "button";
     reload.addEventListener("click", () => void refresh());
     // 数は b ではなく span（見出しの b は「開いているチャット N 件」の N だけにしておく）
-    const head = { sum: el("span", "ch-lsum"), work: el("span", "ch-lnum", "0"), wait: el("span", "ch-lnum", "0"), time: el("span", "ch-time"), fresh: el("span", "ch-new") };
-    head.sum.append(el("i", "w"), "作業中 ", head.work, el("i", "d"), "完了待機 ", head.wait);
+    const head = {
+      sum: el("span", "ch-lsum"),
+      work: el("span", "ch-lnum", "0"),
+      wait: el("span", "ch-lnum", "0"),
+      stale: el("span", "ch-lnum", "0"),
+      staleBox: el("span", "ch-lstale"),
+      time: el("span", "ch-time"),
+      fresh: el("span", "ch-new"),
+    };
+    head.staleBox.append(el("i", "s"), "止まったかも ", head.stale);
+    head.sum.append(el("i", "w"), "作業中 ", head.work, el("i", "d"), "完了待機 ", head.wait, head.staleBox);
     l1.append(count, head.sum, el("span", "ch-time", "取得 " + fmt(now)), head.time, head.fresh, reload);
     bar.append(l1);
     bar.append(el("div", "ch-note", HINT));
@@ -650,18 +665,22 @@
       ref.times.append(el("span", null, "最後に動いた " + ago(c.last_seen_at, now) + "（" + fmtIso(c.last_seen_at) + "）"));
     }
   }
-  // 見出し：作業中と完了待機の数（ランプの記録が1つも無ければ出さない）・まだ並べていない新しいチャットの数
+  // 見出し：作業中・完了待機・止まったかも の数（ランプの記録が1つも無ければ出さない。止まったかもは1件以上の時だけ）・
+  // まだ並べていない新しいチャットの数
   function paintHead(chats, now, fresh) {
     if (!lampHead) return;
-    let work = 0, wait = 0, any = false;
+    let work = 0, wait = 0, stale = 0, any = false;
     for (const c of chats) {
       const st = lampOf(c, now.getTime());
       if (st !== "none") any = true;
       if (st === "working") work++;
       if (st === "done") wait++;
+      if (st === "stale") stale++;
     }
     lampHead.work.textContent = String(work);
     lampHead.wait.textContent = String(wait);
+    lampHead.stale.textContent = String(stale);
+    lampHead.staleBox.hidden = stale === 0;
     lampHead.sum.hidden = !any;
     lampHead.fresh.textContent = fresh > 0 ? "新しいチャット " + fresh + " 件（「更新」で出ます）" : "";
     lampHead.fresh.hidden = !(fresh > 0);
