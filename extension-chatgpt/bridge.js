@@ -10,9 +10,11 @@
     pending = true;
     try {
       const all = await chrome.storage.local.get(null);
-      const entries = Object.entries(all).filter(([key]) => /^tp_gpt_[0-9a-f-]{36}$/.test(key))
-        .map(([, value]) => value).slice(0, 500);
-      window.postMessage({ source: EXT, type: "snapshot", entries }, location.origin);
+      const allEntries = Object.entries(all).filter(([key]) => /^tp_gpt_[0-9a-f-]{36}$/.test(key))
+        .map(([, value]) => value);
+      allEntries.sort((a, b) => Date.parse(b?.observedAt) - Date.parse(a?.observedAt));
+      const entries = allEntries.slice(0, 500);
+      window.postMessage({ source: EXT, type: "snapshot", entries, total: allEntries.length }, location.origin);
     } finally { pending = false; }
   }
   window.addEventListener("message", e => {
