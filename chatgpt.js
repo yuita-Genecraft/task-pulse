@@ -334,7 +334,7 @@
   });
   window.addEventListener("message", async e => {
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.source !== extSource || e.data.type !== "snapshot") return;
-    if (syncKeys().cloud && syncKeys().write.length < 32) return; // read-only clients never upload
+    if (syncKeys().cloud) return; // direct background upload owns cloud sync; never bulk-POST the 500-row local snapshot
     const entries = Array.isArray(e.data.entries) ? e.data.entries.slice(0, 500) : [];
     if (Number.isInteger(e.data.total) && e.data.total > 500) say(`拡張機能に${e.data.total}件あります。最新500件だけ同期しました（過去の記録は削除していません）。`, true);
     try {
