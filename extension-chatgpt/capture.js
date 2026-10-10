@@ -16,7 +16,8 @@
     const stamp = cleanUrl + "\u0000" + title;
     if (lastSent === stamp) return;
     lastSent = stamp;
-    chrome.storage.local.set({ ["tp_gpt_" + id]: { url: cleanUrl, title, observedAt: new Date().toISOString() } });
+    void chrome.storage.local.set({ ["tp_gpt_" + id]: { url: cleanUrl, title, observedAt: new Date().toISOString() } })
+      .catch(() => { if (lastSent === stamp) lastSent = ""; });
   }
   const heading = document.querySelector("title");
   if (heading) new MutationObserver(capture).observe(heading, { childList: true, subtree: true, characterData: true });
