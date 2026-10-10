@@ -1,0 +1,11 @@
+# Example only. Do NOT deploy without approved account/db bindings and tokens.
+name = "taskpulse-chatgpt"
+main = "worker.mjs"
+compatibility_date = "2026-10-10"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "taskpulse-chatgpt"
+database_id = "REPLACE_WITH_APPROVED_D1_DATABASE_ID"
+migrations_dir = "migrations"
