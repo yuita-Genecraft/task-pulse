@@ -113,7 +113,18 @@ test("Wrangler local D1: schema + auth + CAS + close/reopen + import", {timeout:
   x = await send("/chats",{method:"OPTIONS",origin:EXT});
   assert.equal(x.response.status,404,"extension origin may only access capture");
 
+  // Parallel stale writers must not silently overwrite each other.
+  const racing = await Promise.all([
+    send("/chats/"+ID2,{method:"PATCH",token:W,body:{action:"memo",baseRevision:0,memo:"race memo"}}),
+    send("/chats/"+ID2,{method:"PATCH",token:W,body:{action:"close",baseRevision:0}}),
+  ]);
+  assert.deepEqual(racing.map(z=>z.response.status).sort(),[200,409],"exactly one concurrent CAS write succeeds");
   x = await send("/chats",{token:R});
   assert.equal(x.response.status,200);
   assert.equal(x.json.total,2,"no duplicates or corruption");
+  const afterRace = x.json.chats.find(v=>v.id===ID2);
+  assert.equal(afterRace.revision,1);
+  const memoWon = afterRace.memo === "race memo" && afterRace.closedAt === null;
+  const closeWon = afterRace.memo === "local memo" && !!afterRace.closedAt;
+  assert.ok(memoWon || closeWon,"the single successful patch persists atomically");
 });
