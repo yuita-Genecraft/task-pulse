@@ -18,6 +18,12 @@ function mockDb() {
       const stmt = {
         bind(...v) { args = v; return stmt; },
         async first() {
+          if (sql.startsWith('INSERT INTO gpt_chat')) {
+            const [id,url,title,when,memo,closedAt] = args;
+            if (rows.has(id)) return null;
+            rows.set(id,{ id,url,title,observed_at:when,memo,revision:0,closed_at:closedAt });
+            return { id };
+          }
           if (sql.startsWith('SELECT COUNT(*)')) return { n: rows.size };
           if (sql.startsWith('SELECT * FROM gpt_chat WHERE')) return rows.get(args[0]) || null;
           if (sql.startsWith('UPDATE gpt_chat')) {
@@ -113,7 +119,16 @@ test('auth isolation, CORS, capture monotonicity and CAS', async () => {
   r=await handle(request('/chats/'+ID,'PATCH',env.WRITE_TOKEN,{action:'reopen',baseRevision:2}),env);
   assert.equal(r.status,200);
   assert.equal((await r.json()).chat.closedAt,null);
+  r=await handle(request('/import','POST',env.CAPTURE_TOKEN,{url:URL1,title:'No',observedAt:'2026-10-10T00:03:00Z',memo:'No',closedAt:null}),env);
+  assert.equal(r.status,404,'capture token must not import memos');
+  r=await handle(request('/import','POST',env.WRITE_TOKEN,{url:'https://chatgpt.com/c/3b5c73c2-aaaa-bbbb-cccc-0123456789ab',title:'Imported',observedAt:'2026-10-10T00:03:00Z',memo:'private memo',closedAt:null}),env);
+  assert.equal(r.status,200);
+  assert.equal((await r.json()).inserted,true);
+  r=await handle(request('/import','POST',env.WRITE_TOKEN,{url:'https://chatgpt.com/c/3b5c73c2-aaaa-bbbb-cccc-0123456789ab',title:'Overwrite',observedAt:'2026-10-10T00:04:00Z',memo:'bad',closedAt:null}),env);
+  assert.equal((await r.json()).inserted,false,'import must never overwrite existing');
+  assert.equal(DB.rows.get('3b5c73c2-aaaa-bbbb-cccc-0123456789ab').memo,'private memo');
 });
+
 test('CORS preflight only on configured UI and capture-only extension', async () => {
   const env=envOf(mockDb());
   let r=await handle(request('/chats','OPTIONS','',undefined,{origin}),env);
