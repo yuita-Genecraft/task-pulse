@@ -195,15 +195,18 @@
       ? "同期モード：PC・iPhone共通の台帳。拡張機能の自動登録は専用登録鍵が必要です。ChatGPTの会話本文は取得しません。"
       : "ローカルモード：このブラウザ内の記録です。同期にはWorkerとブックマークのgptread/gptwriteが必要です。";
     form.hidden = k.cloud && k.write.length < 32;
+    importBtn.hidden = !k.cloud || k.write.length < 32;
   }
   const form = el("form", "cg-form");
   const url = el("input"); url.type = "url"; url.required = true; url.placeholder = "ChatGPT のチャットURL（/c/…）"; url.setAttribute("aria-label", "チャットURL");
   const title = el("input"); title.type = "text"; title.placeholder = "題（任意）"; title.setAttribute("aria-label", "チャットの題"); title.maxLength = 120;
   const addBtn = el("button", "cg-btn", "登録"); addBtn.type = "submit";
   form.append(url, title, addBtn);
+  const importBtn = el("button", "cg-btn", "この端末の既存記録を同期（既存の同期台帳は上書きしない）");
+  importBtn.type = "button"; importBtn.hidden = true;
   const status = el("div", "cg-status");
   const list = el("div");
-  inner.append(form, status, list);
+  inner.append(form, importBtn, status, list);
   let rendering = 0;
   async function render() {
     const n = ++rendering;
@@ -294,6 +297,25 @@
       url.value = ""; title.value = ""; say(syncKeys().cloud ? "同期台帳に登録しました。" : "登録しました（このブラウザ内）。"); await render();
     } catch (_) { say("保存できませんでした。", true); }
   };
+  importBtn.onclick = async () => {
+    importBtn.disabled = true;
+    let imported = 0, skipped = 0, failed = 0;
+    try {
+      const local = (await localAll()).filter(c => c && canonical(c.url) && validTime(c.observedAt));
+      for (const c of local) {
+        try {
+          const r = await cloudCall("POST", "/import", "write", {
+            url: c.url, title: c.title || "", observedAt: c.observedAt, memo: c.memo || "", closedAt: c.closedAt || null,
+          });
+          if (r.inserted) imported++; else skipped++;
+        } catch (_) { failed++; }
+      }
+      say("同期：新規 " + imported + "件・既に登録済み " + skipped + "件・失敗 " + failed + "件。" +
+        (failed ? "失敗分は再実行できます。" : "元のローカル記録は削除していません。"), failed > 0);
+      await render();
+    } catch (_) { say("ローカル記録を読めませんでした。", true); }
+    finally { importBtn.disabled = false; }
+  };
   reload.onclick = () => { requestExtension(); void render(); };
   tabs.addEventListener("click", e => {
     const b = e.target.closest(".tab"); if (!b) return;
@@ -312,6 +334,7 @@
   });
   window.addEventListener("message", async e => {
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.source !== extSource || e.data.type !== "snapshot") return;
+    if (syncKeys().cloud && syncKeys().write.length < 32) return; // read-only clients never upload
     const entries = Array.isArray(e.data.entries) ? e.data.entries.slice(0, 500) : [];
     if (Number.isInteger(e.data.total) && e.data.total > 500) say(`拡張機能に${e.data.total}件あります。最新500件だけ同期しました（過去の記録は削除していません）。`, true);
     try {
