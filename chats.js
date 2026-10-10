@@ -25,6 +25,18 @@
 //   時刻だけでは比べない：別の書き手が同じミリ秒で書くと、時刻は同じで本文だけが違う（code critic 1回目・2026-10-08）。
 // - メモの中の URL は、決めた場所（chatgpt.com など）の https だけをリンクにする。ほかは文字のまま。
 // - 「外す」は一覧から外すだけ（claude.ai のチャットは消えない）。2回押した時だけ外れる。外した行は「戻す」で戻せる。
+//
+// ランプ（2026-10-09・ゆいた：どのチャットも作業時間が長いので、出力が終わった行にランプを点けたい。できれば作業中と完了待機を分けたい）
+// - 各行の題の左に丸いランプ。青の点滅＝作業中／緑＝完了待機（作業を終えて返事待ち）／灰色の輪＝作業中のまま
+//   LAMP_STALE_MS を過ぎた（止まったかも）／薄い輪＝ランプの記録なし。色だけに頼らず、行の下の文字でも状態を書く。
+//   見出しに 作業中・完了待機・止まったかも の数（止まったかもは1件以上の時だけ）。
+// - 緑は書き終わりより少し早い（チャットは最後の返事の前に done を呼ぶ）。ツールを使わない回はチャットが呼ばないので、
+//   ランプも時刻も前のまま（2026-10-09 のセカンドオピニオンで明示。画面のヒントにも書く）。
+// - ランプは handoff の lamp / lamp_at（チャット自身が set_chat_lamp で点ける申告）。観測ではないので、点け忘れ・途中で止まった時は
+//   前の状態のまま残る。このページは読むだけ（ランプを書く口は無い）。
+// - この画面が見えている間だけ、LAMP_POLL_MS ごとに GET /chats を読み直し、ランプと時刻だけを描き直す（行の増減・題・メモは
+//   描き直さない＝書きかけのメモや「外す？」を消さない）。新しく増えたチャットは数だけ出し、「更新」で並べる。
+// - 「最後に動いた」と並び順は、登録の時刻とランプの時刻の新しい方。
 (() => {
   "use strict";
   const BASE = "https://handoff-mcp.gooooerer.workers.dev";
@@ -40,6 +52,12 @@
     seen_not_after_close: "閉じた時刻より後の操作として扱えませんでした（少し待ってからもう一度）",
     not_asked: "戻す指示として扱われませんでした",
   };
+  const LAMP_POLL_MS = 30 * 1000; // ランプを読み直す間隔（この画面が見えている時だけ）
+  const LAMP_STALE_MS = 2 * 60 * 60 * 1000; // これより長く「作業中」のままなら灰色（止まったかも）
+  const LAMP_STATES = ["working", "done"]; // handoff の chat_lamp と同じ
+  const LAMP_WORD = { working: "作業中", done: "完了待機", stale: "作業中のまま" };
+  const LAMP_HINT =
+    "ランプ（各チャットの申告）：青の点滅＝作業中／緑＝完了待機（最後の返事を書く直前に点くので、書き終わりより数十秒〜1分早いことがある）／灰色の輪＝2時間以上「作業中」のまま（止まったかも）。ツールを使わない短い返事では変わらず、点け忘れもあり得ます。見えている間は30秒ごとにランプだけ更新（行の増減・メモは「更新」で）。";
   const VIEW = "chats";
   const UNCAT = "未分類"; // レーンが未設定（null）のチャットをまとめる表示名
   const CLOSER = { chat: "チャット自身", yuita: "ゆいた" }; // 申告（認証ではない）
@@ -74,7 +92,29 @@
   .ch-row{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line-soft);border-radius:11px;
     padding:10px 10px 10px 13px;margin:6px 0}
   .ch-body{flex:1 1 auto;min-width:0}
-  .ch-title{font-size:14px;font-weight:600;line-height:1.35;word-break:break-word}
+  .ch-title{display:flex;align-items:flex-start;gap:8px;font-size:14px;font-weight:600;line-height:1.35;word-break:break-word}
+  .ch-ttext{flex:1 1 auto;min-width:0}
+  .ch-lamp{flex:0 0 auto;width:10px;height:10px;margin-top:4px;border-radius:50%;box-sizing:border-box;border:1.5px solid var(--line)}
+  .ch-lamp.l-working{background:var(--prog);border-color:var(--prog);animation:chLamp 1.8s ease-out infinite}
+  .ch-lamp.l-done{background:var(--done);border-color:var(--done);box-shadow:0 0 0 3px rgba(70,210,127,.16)}
+  .ch-lamp.l-stale{border-color:var(--muted)}
+  @keyframes chLamp{0%{box-shadow:0 0 0 0 rgba(90,160,242,.55)}70%{box-shadow:0 0 0 7px rgba(90,160,242,0)}100%{box-shadow:0 0 0 0 rgba(90,160,242,0)}}
+  .ch-times{display:contents}
+  .ch-lampt{font-weight:600}
+  .ch-lampt.t-working{color:var(--prog)}
+  .ch-lampt.t-done{color:var(--done)}
+  .ch-lampt.t-stale{color:var(--muted)}
+  .ch-lsum{display:inline-flex;align-items:center;gap:5px;font:11.5px/1 var(--mono);color:var(--muted)}
+  .ch-lsum[hidden],.ch-new[hidden]{display:none}
+  .ch-lsum i{display:inline-block;width:8px;height:8px;border-radius:50%}
+  .ch-lsum i.w{background:var(--prog)}
+  .ch-lsum i.d{background:var(--done);margin-left:6px}
+  .ch-lsum .ch-lnum{color:var(--text);font:600 12px/1 var(--mono)}
+  .ch-lstale{display:inline-flex;align-items:center;gap:5px}
+  .ch-lstale[hidden]{display:none}
+  .ch-lsum i.s{box-sizing:border-box;border:1.5px solid var(--muted);margin-left:6px}
+  .ch-time.ch-err{color:var(--late)}
+  .ch-new{font:11px/1 var(--mono);color:var(--accent)}
   .ch-meta{display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;margin-top:5px;font:11.5px/1.3 var(--mono);color:var(--muted)}
   .ch-chip{font:10.5px/1 var(--mono);color:var(--muted);background:var(--surface-2);border:1px solid var(--line-soft);border-radius:5px;padding:2px 5px}
   .ch-open{flex:0 0 auto;display:inline-flex;align-items:center;min-height:40px;font-size:13px;font-weight:600;color:#dbe8ff;
@@ -123,6 +163,12 @@
   stream.insertAdjacentElement("afterend", panel);
 
   let seq = 0; // 古い取得の結果で新しい表示を上書きしない
+  // ランプの読み直し（下の「ランプ」）が使う状態。show() より先に用意しておく。
+  let rowRefs = new Map(); // 今の描画の開いている行（url → { c, lamp, times }）
+  let lampHead = null; // 今の描画の見出しの、ランプの件数と時刻の場所
+  let drawn = 0; // 描画の番号（show のたびに進む。読み直しの途中で描き直されたら、古い行には描かない）
+  let pollTimer = 0;
+  let polling = false;
   tabs.addEventListener("click", (e) => {
     const b = e.target.closest(".tab");
     if (!b) return;
@@ -138,8 +184,10 @@
         if (pn && !panel.hidden) pn.textContent = "チャット";
       }, 0);
       void refresh();
+      startPoll();
     } else if (!panel.hidden) {
       panel.hidden = true;
+      stopPoll();
       wrap && wrap.classList.remove("v-chats");
       // 行き先が自分の枠を持つ画面（taskgraf）なら、その枠が出ている＝タスクの流れは戻さない
       if (!document.querySelector(".tg-panel:not([hidden])")) stream.style.display = "";
@@ -147,6 +195,13 @@
   });
   window.addEventListener("hashchange", () => {
     if (!panel.hidden) void refresh();
+  });
+  // 見えていない間はランプを読みに行かない。見えた時に1回読み直してから、また間隔ごとに読む。
+  document.addEventListener("visibilitychange", () => {
+    if (panel.hidden) return;
+    if (document.hidden) return stopPoll();
+    void pollLamps();
+    startPoll();
   });
 
   // ---- 鍵：# の後ろからだけ読む。このページは localStorage などに書かない（読む鍵＝graph、書き込みの鍵＝write） ----
@@ -203,7 +258,12 @@
     const okOpen = (c) => !!c && isStr(c.url) && isStrOrNull(c.title) && isStrOrNull(c.project_id) && isStr(c.last_seen_at) && okMemo(c);
     const okClosed = (c) =>
       !!c && isStr(c.url) && isStrOrNull(c.title) && isStrOrNull(c.project_id) && isStr(c.closed_at) && isStr(c.closed_by) && okMemo(c);
-    const chats = d.chats.filter(okOpen).map(withMemo);
+    // ランプの欄も無くてよい（古い handoff）。知らない値・読めない時刻は「ランプなし」として扱う（行は落とさない）。
+    const withLamp = (c) => {
+      const ok = LAMP_STATES.includes(c.lamp) && isStr(c.lamp_at) && !Number.isNaN(Date.parse(c.lamp_at));
+      return Object.assign({}, c, { lamp: ok ? c.lamp : null, lamp_at: ok ? c.lamp_at : null });
+    };
+    const chats = d.chats.filter(okOpen).map(withMemo).map(withLamp);
     const closedIn = Array.isArray(d.recently_closed) ? d.recently_closed : [];
     const closed = closedIn.filter(okClosed).map(withMemo);
     const total = Number.isInteger(d.open_total) && d.open_total >= chats.length ? d.open_total : chats.length;
@@ -213,6 +273,7 @@
 
   // ---- 描く ----
   function render(data, now) {
+    const refs = new Map(); // この描画の開いている行（url → 行のランプと時刻の場所）
     const inner = el("div", "ch-inner");
     const bar = el("div", "ch-bar");
     const l1 = el("div", "ch-l1");
@@ -223,9 +284,22 @@
     const reload = el("button", "ch-reload", "更新");
     reload.type = "button";
     reload.addEventListener("click", () => void refresh());
-    l1.append(count, el("span", "ch-time", "取得 " + fmt(now)), reload);
+    // 数は b ではなく span（見出しの b は「開いているチャット N 件」の N だけにしておく）
+    const head = {
+      sum: el("span", "ch-lsum"),
+      work: el("span", "ch-lnum", "0"),
+      wait: el("span", "ch-lnum", "0"),
+      stale: el("span", "ch-lnum", "0"),
+      staleBox: el("span", "ch-lstale"),
+      time: el("span", "ch-time"),
+      fresh: el("span", "ch-new"),
+    };
+    head.staleBox.append(el("i", "s"), "止まったかも ", head.stale);
+    head.sum.append(el("i", "w"), "作業中 ", head.work, el("i", "d"), "完了待機 ", head.wait, head.staleBox);
+    l1.append(count, head.sum, el("span", "ch-time", "取得 " + fmt(now)), head.time, head.fresh, reload);
     bar.append(l1);
     bar.append(el("div", "ch-note", HINT));
+    bar.append(el("div", "ch-note", LAMP_HINT));
     if (!readKeys().write) bar.append(el("div", "ch-note", WRITE_HINT));
     inner.append(bar);
 
@@ -237,7 +311,7 @@
       const h = el("h3", "ch-gh");
       h.append(el("span", "ch-gname", g.lane === null ? UNCAT : g.lane), el("span", "ch-cnt", String(g.list.length)));
       sec.append(h);
-      for (const c of g.list) sec.append(row(c, now, "open"));
+      for (const c of g.list) sec.append(row(c, now, "open", refs));
       inner.append(sec);
     }
     if (data.total > data.chats.length) {
@@ -249,10 +323,13 @@
     if (data.closed.length) {
       const det = el("details", "ch-closed");
       det.append(el("summary", null, "最近閉じたチャット（7日以内・" + data.closed.length + " 件）"));
-      for (const c of data.closed) det.append(row(c, now, "closed"));
+      for (const c of data.closed) det.append(row(c, now, "closed", refs));
       inner.append(det);
     }
     show(inner);
+    rowRefs = refs;
+    lampHead = head;
+    paintHead(data.chats, now, 0);
   }
 
   // レーンごとにまとめる。まとまりの並び＝中の一番新しい動きの順（新しい順）。同じならレーン名のコードポイント順。中は新しい順。
@@ -264,21 +341,31 @@
       by.get(k).push(c);
     }
     const groups = [...by.entries()].map(([lane, list]) => {
-      list.sort((a, b) => time(b.last_seen_at) - time(a.last_seen_at));
-      return { lane, list, latest: time(list[0].last_seen_at) };
+      list.sort((a, b) => activeAt(b) - activeAt(a));
+      return { lane, list, latest: activeAt(list[0]) };
     });
     groups.sort((a, b) => b.latest - a.latest || byCodePoint(a.lane === null ? "\u{10FFFF}" : a.lane, b.lane === null ? "\u{10FFFF}" : b.lane));
     return groups;
   }
 
-  function row(c, now, kind) {
+  function row(c, now, kind, refs) {
     const r = el("div", "ch-row");
     const body = el("div", "ch-body");
-    body.append(el("div", "ch-title", c.title || "（題なし）"));
+    const title = el("div", "ch-title");
+    const lamp = kind === "open" ? el("span", "ch-lamp") : null;
+    if (lamp) {
+      lamp.setAttribute("aria-hidden", "true"); // 状態は行の下の文字でも書く
+      title.append(lamp);
+    }
+    title.append(el("span", "ch-ttext", c.title || "（題なし）"));
+    body.append(title);
     const meta = el("div", "ch-meta");
     if (/^https:\/\/claude\.ai\/code\//.test(c.url)) meta.append(el("span", "ch-chip", "Code"));
     if (kind === "open") {
-      meta.append(el("span", null, "最後に動いた " + ago(c.last_seen_at, now) + "（" + fmtIso(c.last_seen_at) + "）"));
+      const ref = { c, lamp, times: el("span", "ch-times") };
+      meta.append(ref.times);
+      paintLamp(ref, now);
+      refs.set(c.url, ref);
     } else {
       if (c.project_id !== null) meta.append(el("span", "ch-chip", c.project_id));
       meta.append(el("span", null, "閉じた " + ago(c.closed_at, now) + "（" + fmtIso(c.closed_at) + "）・申告：" + (CLOSER[c.closed_by] || c.closed_by)));
@@ -553,8 +640,111 @@
     return a;
   }
 
+  // ---- ランプ：描く・見えている間だけ読み直す ----
+  // 「最後に動いた」と並び順：登録の時刻とランプの時刻の新しい方
+  function activeAt(c) {
+    return Math.max(time(c.last_seen_at), c.lamp_at ? time(c.lamp_at) : 0);
+  }
+  function lampOf(c, nowMs) {
+    if (c.lamp === "working") return nowMs - time(c.lamp_at) >= LAMP_STALE_MS ? "stale" : "working";
+    if (c.lamp === "done") return "done";
+    return "none";
+  }
+  function paintLamp(ref, now) {
+    const c = ref.c;
+    const st = lampOf(c, now.getTime());
+    ref.lamp.className = "ch-lamp l-" + st;
+    ref.times.textContent = "";
+    if (st !== "none") {
+      const since = st === "done" ? "" : "から"; // 作業中は始めた時刻、完了待機は終わった時刻
+      ref.times.append(el("span", "ch-lampt t-" + st, LAMP_WORD[st] + "・" + ago(c.lamp_at, now) + since + "（" + fmtIso(c.lamp_at) + "）"));
+      if (st === "stale") ref.times.append(el("span", "ch-lampt t-stale", "止まったかも"));
+    }
+    // ランプより後に登録で動いた（またはランプが無い）時だけ、登録の時刻も出す
+    if (st === "none" || time(c.last_seen_at) > time(c.lamp_at)) {
+      ref.times.append(el("span", null, "最後に動いた " + ago(c.last_seen_at, now) + "（" + fmtIso(c.last_seen_at) + "）"));
+    }
+  }
+  // 見出し：作業中・完了待機・止まったかも の数（ランプの記録が1つも無ければ出さない。止まったかもは1件以上の時だけ）・
+  // まだ並べていない新しいチャットの数
+  function paintHead(chats, now, fresh) {
+    if (!lampHead) return;
+    let work = 0, wait = 0, stale = 0, any = false;
+    for (const c of chats) {
+      const st = lampOf(c, now.getTime());
+      if (st !== "none") any = true;
+      if (st === "working") work++;
+      if (st === "done") wait++;
+      if (st === "stale") stale++;
+    }
+    lampHead.work.textContent = String(work);
+    lampHead.wait.textContent = String(wait);
+    lampHead.stale.textContent = String(stale);
+    lampHead.staleBox.hidden = stale === 0;
+    lampHead.sum.hidden = !any;
+    lampHead.fresh.textContent = fresh > 0 ? "新しいチャット " + fresh + " 件（「更新」で出ます）" : "";
+    lampHead.fresh.hidden = !(fresh > 0);
+  }
+  async function pollLamps() {
+    if (polling || panel.hidden || document.hidden || !rowRefs.size) return;
+    const key = readKeys().graph;
+    if (!key) return;
+    const at = drawn;
+    polling = true;
+    let data = null;
+    try {
+      const res = await fetch(CHATS_URL, {
+        method: "GET",
+        headers: { authorization: "Bearer " + key },
+        cache: "no-store",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+      });
+      if (res.ok) data = readList(await res.json());
+    } catch (_) {
+      data = null;
+    }
+    polling = false;
+    if (at !== drawn || !lampHead) return; // 読み直しの間に描き直された：古い行には描かない
+    const now = new Date();
+    const hm = fmt(now).split(" ")[1];
+    if (!data) {
+      lampHead.time.textContent = "ランプを読み直せませんでした " + hm;
+      lampHead.time.classList.add("ch-err");
+      return;
+    }
+    let fresh = 0;
+    for (const c of data.chats) {
+      const ref = rowRefs.get(c.url);
+      if (!ref) {
+        fresh++;
+        continue;
+      }
+      ref.c.lamp = c.lamp;
+      ref.c.lamp_at = c.lamp_at;
+      ref.c.last_seen_at = c.last_seen_at;
+    }
+    // 一覧から消えた行（別の所で閉じられた等）も、時刻の「〜前」だけは今に合わせる
+    for (const ref of rowRefs.values()) paintLamp(ref, now);
+    paintHead(data.chats, now, fresh);
+    lampHead.time.textContent = "ランプ " + hm;
+    lampHead.time.classList.remove("ch-err");
+  }
+  function startPoll() {
+    stopPoll();
+    pollTimer = setInterval(() => void pollLamps(), LAMP_POLL_MS);
+  }
+  function stopPoll() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = 0;
+  }
+
   // ---- 小さい道具 ----
   function show(node) {
+    // 描き直したら、前の行への参照は捨てる（render が新しい行で入れ直す）
+    drawn++;
+    rowRefs = new Map();
+    lampHead = null;
     panel.textContent = "";
     panel.appendChild(node);
   }
