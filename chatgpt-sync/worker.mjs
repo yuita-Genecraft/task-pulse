@@ -77,7 +77,7 @@ export async function handle(request, env) {
   const origin = corsOrigin(request, path, method);
   if (origin === null) return send({ error: 'not_found' }, 404);
   if (method === 'OPTIONS') {
-    if ((origin !== SITE && !(path === '/capture' && /^chrome-extension:\/\/[a-p]{32}$/.test(origin))) || (!['/capture', '/chats'].includes(path) && !ID_PATTERN.test(path.replace(/^\/chats\//, '')))) return send({ error: 'not_found' }, 404);
+    if ((origin !== SITE && !(path === '/capture' && /^chrome-extension:\/\/[a-p]{32}$/.test(origin))) || (!['/capture', '/import', '/chats'].includes(path) && !ID_PATTERN.test(path.replace(/^\/chats\//, '')))) return send({ error: 'not_found' }, 404);
     return new Response(null, {
       status: 204,
       headers: { 'access-control-allow-origin': origin, 'access-control-allow-methods': 'GET,POST,PATCH,OPTIONS',
@@ -87,11 +87,12 @@ export async function handle(request, env) {
   if (!keysValid(env)) return send({ error: 'not_found' }, 404, origin);
   const isGet = path === '/chats' && method === 'GET';
   const isCapture = path === '/capture' && method === 'POST';
+  const isImport = path === '/import' && method === 'POST';
   const match = /^\/chats\/([0-9a-f-]{36})$/.exec(path);
   const isPatch = method === 'PATCH' && match && ID_PATTERN.test(match[1]);
-  if (!isGet && !isCapture && !isPatch) return send({ error: 'not_found' }, 404, origin);
+  if (!isGet && !isCapture && !isImport && !isPatch) return send({ error: 'not_found' }, 404, origin);
   const auth = isGet ? bearer(request, env, 'READ') :
-    isPatch ? bearer(request, env, 'WRITE') :
+    (isPatch || isImport) ? bearer(request, env, 'WRITE') :
     bearer(request, env, 'CAPTURE') || bearer(request, env, 'WRITE');
   if (!auth) return send({ error: 'not_found' }, 404, origin);
   if (!env.DB || typeof env.DB.prepare !== 'function') return send({ error: 'unavailable' }, 503, origin);
@@ -103,6 +104,20 @@ export async function handle(request, env) {
   }
   const input = await body(request);
   if (!input) return send({ error: 'invalid_json' }, 400, origin);
+  if (isImport) {
+    const c = canonical(input.url);
+    const when = parseObservation(input.observedAt);
+    const memo = memoValue(input.memo);
+    const closeAt = input.closedAt === null ? null : parseObservation(input.closedAt);
+    if (!c || !when || memo === null || (input.closedAt !== null && !closeAt) || typeof input.title !== 'string' || input.title.length > 2000)
+      return send({ error: 'invalid_import' }, 400, origin);
+    // Explicit user import is create-only. Existing records are never overwritten.
+    const inserted = await env.DB.prepare(
+      "INSERT INTO gpt_chat(id,url,title,observed_at,memo,closed_at) VALUES (?,?,?,?,?,?) " +
+      "ON CONFLICT(id) DO NOTHING RETURNING id"
+    ).bind(c.id, c.url, cleanText(input.title,120), when, memo, closeAt).first();
+    return send({ ok: true, inserted: !!inserted }, 200, origin);
+  }
   if (isCapture) {
     const c = canonical(input.url);
     const when = parseObservation(input.observedAt);
