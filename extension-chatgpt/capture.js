@@ -1,7 +1,7 @@
 // ChatGPT本文・Cookie・資格は読まない。URL/タブ題/ブラウザで確認した時刻だけ。
 (() => {
   "use strict";
-  const pattern = /^\/(?:g\/g-[A-Za-z0-9_-]{1,160}\/)?c\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+  const pattern = /^\/(?:g\/g-[A-Za-z0-9_-]{1,160}\/)?c\/([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$/;
   let lastUrl = "";
   let lastSent = "";
   function capture() {
