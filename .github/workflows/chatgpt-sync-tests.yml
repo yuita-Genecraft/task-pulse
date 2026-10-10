@@ -26,5 +26,32 @@ jobs:
           node --check extension-chatgpt/capture.js
           node --check chatgpt-sync/worker.mjs
           node --check chatgpt-sync/test/worker.test.mjs
+          node --check chatgpt-sync/test/d1-live.test.mjs
       - name: Deterministic mock-D1 regression tests
         run: node --test chatgpt-sync/test/worker.test.mjs
+
+  wrangler-d1-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Apply schema to ephemeral local D1 only
+        env:
+          CI: "true"
+        run: |
+          npx --yes wrangler@4.79.0 d1 migrations apply taskpulse-chatgpt-local-test --local --config chatgpt-sync/wrangler.test.toml
+      - name: Worker and real local D1 HTTP acceptance (no credentials)
+        env:
+          CI: "true"
+        run: |
+          set -eu
+          npx --yes wrangler@4.79.0 dev --local --config chatgpt-sync/wrangler.test.toml --ip 127.0.0.1 --port 8798 > "$RUNNER_TEMP/chatgpt-wrangler.log" 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+          if ! node --test chatgpt-sync/test/d1-live.test.mjs; then
+            echo "=== Wrangler startup/error log (fixtures only) ==="
+            tail -n 120 "$RUNNER_TEMP/chatgpt-wrangler.log"
+            exit 1
+          fi
