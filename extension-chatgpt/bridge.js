@@ -17,8 +17,7 @@
   window.addEventListener("message", e => {
     if (e.source === window && e.origin === location.origin && e.data && e.data.source === PAGE && e.data.type === "request") void send();
   });
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && Object.keys(changes).some(key => key.startsWith("tp_gpt_"))) void send();
-  });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") void send(); });
+  setInterval(() => { if (document.visibilityState === "visible") void send(); }, 30000);
   void send();
 })();
