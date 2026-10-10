@@ -52,7 +52,7 @@ function corsOrigin(request, pathname, method) {
   const origin = request.headers.get('origin') || '';
   if (!origin || origin === SITE) return origin;
   // Only the upload-only endpoint accepts extension origins.
-  if (pathname === '/capture' && method === 'POST' && /^chrome-extension:\/\/[a-p]{32}$/.test(origin)) return origin;
+  if (pathname === '/capture' && (method === 'POST' || method === 'OPTIONS') && /^chrome-extension:\/\/[a-p]{32}$/.test(origin)) return origin;
   return null;
 }
 async function body(request) {
@@ -77,10 +77,10 @@ export async function handle(request, env) {
   const origin = corsOrigin(request, path, method);
   if (origin === null) return send({ error: 'not_found' }, 404);
   if (method === 'OPTIONS') {
-    if (origin !== SITE || !['/capture', '/chats'].includes(path) && !ID_PATTERN.test(path.replace(/^\/chats\//, ''))) return send({ error: 'not_found' }, 404);
+    if ((origin !== SITE && !(path === '/capture' && /^chrome-extension:\/\/[a-p]{32}$/.test(origin))) || (!['/capture', '/chats'].includes(path) && !ID_PATTERN.test(path.replace(/^\/chats\//, '')))) return send({ error: 'not_found' }, 404);
     return new Response(null, {
       status: 204,
-      headers: { 'access-control-allow-origin': SITE, 'access-control-allow-methods': 'GET,POST,PATCH,OPTIONS',
+      headers: { 'access-control-allow-origin': origin, 'access-control-allow-methods': 'GET,POST,PATCH,OPTIONS',
         'access-control-allow-headers': 'Authorization,Content-Type', 'access-control-max-age': '600', 'vary': 'Origin' },
     });
   }
