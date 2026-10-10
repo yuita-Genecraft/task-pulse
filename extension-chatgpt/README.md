@@ -1,17 +1,29 @@
-# Task Pulse ChatGPT タブ — ローカル版（ドラフト）
+# Task Pulse ChatGPTタブ — 同期モード（Draft / 未デプロイ）
 
-- 既存の「チャット」を「Claude」と表示し、「ChatGPT」を追加。
-- ChatGPTは本人の通常チャットURL（`https://chatgpt.com/c/<UUID>` またはプロジェクト内 `/g/g-.../c/<UUID>`）だけ登録。`/share/`リンクは対象外。query/fragmentは破棄。
-- 追加するものはURL・題・閲覧確認時刻・手入力メモ（500字以下）・明示的な一覧外しと戻しのみ。会話本文・Cookie・APIキー・トークンは取得せず、外部APIへのPOSTはない。
-- Chrome拡張をインストールすれば、PC版ChatGPTで開いたチャットを自動的に `chrome.storage.local` に記録し、同じPCのTask Pulseを開いたときに同期。拡張機能なしでもURL手動登録できる。
-- Task Pulse側の記録はブラウザのIndexedDB。二重タブのメモ保存は同一レコードの readwrite transaction と memoVersion で競合検出。拡張機能の自動登録で「外す」を解除しない。
-- **他端末（iPhone含む）との同期・ChatGPTの過去全チャット一括取得・作業中/完了ランプの観測は未対応**。インストール前に開いた会話は自動で埋まらない。
-- `Claude`のhandoff一覧・権限・LANE・ランプの既存API、公開本番は変更しない。
+## 状態
+既存PR #7のPCローカル機能を維持しつつ、ChatGPT専用Worker + D1への同期を追加するDraftです。
+**GitHubにコードがあるだけでは使用できません。** Cloudflare D1/Workerの作成、3鍵の安全な設定、deployと実機受け入れが別途必要です。既存Claude用handoffの鍵やDBを共有しません。
 
-## 拡張機能をPC Chromeに読み込む
+## PC：会話の自動登録
+- Chrome拡張の `extension-chatgpt` フォルダを開発者モードで読み込みます。
+- 拡張の「オプション」画面で、運用者が設定済みの **CAPTURE_TOKEN（登録専用）**を設定します。
+- ChatGPTで通常チャットを開くと、拡張バックグラウンドがURL・タイトル・ブラウザ観測時刻だけ送ります。会話本文・Cookie・ChatGPTのAPIキーは読みません。
+- 通信不可・鍵未設定なら未送信キューに残し、5分ごとに再試行します。失敗後に勝手に消しません。
+- 登録専用の鍵では一覧の閲覧・メモ更新・一覧から外す/戻すができません。
+- `chrome.storage.local`は`TRUSTED_CONTEXTS`へ制限し、ページに入るcontent scriptは鍵を読めません。
 
-1. `chrome://extensions` を開いて「デベロッパーモード」を有効にする。
-2. 「パッケージ化されていない拡張機能を読み込む」で `extension-chatgpt` フォルダを選ぶ。
-3. ChatGPTで会話を開き、Task PulseのChatGPTタブで「更新」。
+## taskPulseでPC・iPhone共通一覧を使う
+- 既存のブックマーク URL に、**# の後ろ**のパラメータ `gptread=...` と `gptwrite=...` を追加します（既存graph/write値はそのまま維持）。
+- 同じブックマークをiPhoneで開けば、同じCloudflareの台帳を読む構成です。
+- gptreadのみの場合は読み取り専用です。gptread未指定なら従来どおり端末ローカルの一覧です。
+- 現在PC内にある過去のメモや「外す」記録は、自動的にネットへ送られません。同期モードで **「この端末の既存記録を同期」** を本人が押した場合だけ、同期台帳にまだないIDを作成します。既存IDのメモ/閉鎖状態は上書きせず、ローカル記録も消しません。
+- ChatGPTの共有リンク（/share/）は登録しません。ChatGPTアプリ本体の会話を消す操作はありません。
 
-この版はCloudflareの正本DBではない。同期のために既存handoffの鍵を流用しない。iPhoneや別PCから同じ一覧を読むには、後続の専用レジストリと最小権限の登録口が必要。
+## 未完成・制限
+- iPhone版ChatGPTアプリで開いたチャットをOS越しに自動検出することは**今回の範囲外**。iPhoneからの閲覧/メモ/手動登録はサーバー反映後の対象です。
+- 実機Chrome拡張、iPhoneブラウザ、Cloudflare remote D1、CORS/認証エラー、オフライン再送の本番E2Eは未実施。
+- 非本番Nodeテストは`node --test chatgpt-sync/test/worker.test.mjs`。実SQLite/D1でのSQL回帰は未確認。
+- ChatGPTの生成中/出力完了ランプは未実装。
+- 公開ページに秘密鍵を埋めないでください。URLフラグメント内の鍵はブラウザ履歴・同期・同一originのコードから読めるbearer credentialです。
+
+本番手順と承認ゲートは `chatgpt-sync/README.md` を参照してください。
