@@ -10,8 +10,8 @@
   const DB = "taskpulse-chatgpt-local-v1";
   const STORE = "chats";
   const MAX_MEMO = 500;
-  const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-  const pathRe = new RegExp("^/(?:g/g-[A-Za-z0-9_-]{1,160}/)?c/(" + uuid + ")$", "i");
+  const uuid = "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}";
+  const pathRe = new RegExp("^/(?:g/g-[A-Za-z0-9_-]{1,160}/)?c/(" + uuid + ")$");
   const extSource = "taskpulse-chatgpt-extension";
   const pageSource = "taskpulse-chatgpt-page";
   const dbReady = new Promise((resolve, reject) => {
