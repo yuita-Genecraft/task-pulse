@@ -254,6 +254,7 @@
   window.addEventListener("message", async e => {
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.source !== extSource || e.data.type !== "snapshot") return;
     const entries = Array.isArray(e.data.entries) ? e.data.entries.slice(0, 500) : [];
+    if (Number.isInteger(e.data.total) && e.data.total > 500) say(`拡張機能に${e.data.total}件あります。最新500件だけ同期しました（過去の記録は削除していません）。`, true);
     try {
       for (const c of entries) if (c && typeof c === "object") await add(c.url, c.title, c.observedAt);
       if (!panel.hidden) await render();
