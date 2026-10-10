@@ -1,0 +1,30 @@
+name: ChatGPT sync offline tests
+on:
+  pull_request:
+    paths:
+      - 'chatgpt.js'
+      - 'extension-chatgpt/**'
+      - 'chatgpt-sync/**'
+      - '.github/workflows/chatgpt-sync-tests.yml'
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Check Node environment
+        run: node --version
+      - name: Syntax checks
+        run: |
+          node --check chatgpt.js
+          node --check extension-chatgpt/background.js
+          node --check extension-chatgpt/options.js
+          node --check extension-chatgpt/bridge.js
+          node --check extension-chatgpt/capture.js
+          node --check chatgpt-sync/worker.mjs
+          node --check chatgpt-sync/test/worker.test.mjs
+      - name: Deterministic mock-D1 regression tests
+        run: node --test chatgpt-sync/test/worker.test.mjs

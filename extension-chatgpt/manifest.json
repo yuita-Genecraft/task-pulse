@@ -1,9 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Task Pulse — ChatGPT チャット登録",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "開いたChatGPTチャットのURL、題、確認時刻だけをこのブラウザのTask Pulseへ登録します。",
-  "permissions": ["storage"],
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://taskpulse-chatgpt.gooooerer.workers.dev/*"],
+  "background": { "service_worker": "background.js" },
+  "options_page": "options.html",
   "content_scripts": [
     { "matches": ["https://chatgpt.com/*"], "js": ["capture.js"], "run_at": "document_idle" },
     { "matches": ["https://yuita-genecraft.github.io/task-pulse/*"], "js": ["bridge.js"], "run_at": "document_idle" }

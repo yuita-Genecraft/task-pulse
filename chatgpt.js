@@ -7,6 +7,26 @@
   const stream = document.getElementById("stream");
   if (!tabs || !stream) return;
   const VIEW = "chatgpt";
+  // Opt-in: independent, per-capability tokens in the bookmark fragment.
+  const API = "https://taskpulse-chatgpt.gooooerer.workers.dev";
+  function syncKeys() {
+    const p = new URLSearchParams(location.hash.replace(/^#/, ""));
+    const read = (p.get("gptread") || "").trim();
+    const write = (p.get("gptwrite") || "").trim();
+    return { read, write, cloud: read.length >= 32 };
+  }
+  async function cloudCall(method, path, permission, payload) {
+    const token = syncKeys()[permission];
+    if (!token || token.length < 32) throw new Error("missing_token");
+    let response;
+    try {
+      response = await fetch(API + path, { method, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
+        headers: { "Authorization": "Bearer " + token, ...(payload ? { "Content-Type": "application/json" } : {}) },
+        ...(payload ? { body: JSON.stringify(payload) } : {}) });
+    } catch (_) { throw new Error("network"); }
+    if (!response.ok) throw new Error(response.status === 409 ? "conflict" : "http_" + response.status);
+    return response.json();
+  }
   const DB = "taskpulse-chatgpt-local-v1";
   const STORE = "chats";
   const MAX_MEMO = 500;
@@ -53,7 +73,7 @@
     const t = Date.parse(s);
     return Number.isFinite(t) && t >= Date.UTC(2023, 0, 1) && t <= Date.now() + 300000 ? new Date(Math.min(t, Date.now())).toISOString() : null;
   }
-  function transaction(id, edit) {
+  function localTransaction(id, edit) {
     return dbReady.then(db => new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, "readwrite");
       const store = tx.objectStore(STORE);
@@ -71,7 +91,7 @@
       tx.onabort = () => reject(tx.error || new Error("保存が中止されました"));
     }));
   }
-  function add(raw, title, observedAt) {
+  function localAdd(raw, title, observedAt) {
     const c = canonical(raw);
     const t = validTime(observedAt);
     if (!c || !t) return Promise.resolve(false);
@@ -87,13 +107,41 @@
       return { row, result: true };
     });
   }
-  function all() {
+  async function add(raw, title, observedAt) {
+    if (!syncKeys().cloud) return localAdd(raw, title, observedAt);
+    const c = canonical(raw); if (!c) return false;
+    await cloudCall("POST", "/capture", "write", { url: c.url, title: cleanTitle(title), observedAt });
+    return true;
+  }
+  const visibleRevisions = new Map();
+  async function transaction(id, edit) {
+    if (!syncKeys().cloud) return localTransaction(id, edit);
+    const fresh = (await all()).find(c => c.id === id) || null;
+    if (!fresh || visibleRevisions.get(id) !== fresh.revision) throw new Error("conflict");
+    const outcome = edit(fresh);
+    if (!outcome.row) return outcome.result;
+    const target = outcome.row;
+    if ((target.memo || "") !== (fresh.memo || "")) {
+      await cloudCall("PATCH", "/chats/" + id, "write", { action: "memo", baseRevision: fresh.revision, memo: target.memo });
+    } else if (target.closedAt !== fresh.closedAt) {
+      await cloudCall("PATCH", "/chats/" + id, "write", { action: target.closedAt ? "close" : "reopen", baseRevision: fresh.revision });
+    }
+    return outcome.result;
+  }
+  function localAll() {
     return dbReady.then(db => new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, "readonly");
       const request = tx.objectStore(STORE).getAll();
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     }));
+  }
+  async function all() {
+    if (!syncKeys().cloud) return localAll();
+    const data = await cloudCall("GET", "/chats", "read");
+    if (!data || !Array.isArray(data.chats)) throw new Error("bad_shape");
+    if (data.limited) throw new Error("incomplete");
+    return data.chats;
   }
   const fmt = (s) => {
     const d = new Date(s);
@@ -140,15 +188,25 @@
   const count = el("strong", null, "開いているチャット 0 件");
   const reload = el("button", "cg-btn", "更新");
   top.append(count, reload);
-  inner.append(top, el("p", "cg-hint", "ChatGPTで開いた会話を拡張機能で自動登録できます。登録されるのはURL・題・確認時刻だけ。ここでのメモ・外す／戻すは、このブラウザに保存されます。他の端末とは同期しません。"));
+  const hint = el("p", "cg-hint"); inner.append(top, hint);
+  function modeText() {
+    const k = syncKeys();
+    hint.textContent = k.cloud
+      ? "同期モード：PC・iPhone共通の台帳。拡張機能の自動登録は専用登録鍵が必要です。ChatGPTの会話本文は取得しません。"
+      : "ローカルモード：このブラウザ内の記録です。同期にはWorkerとブックマークのgptread/gptwriteが必要です。";
+    form.hidden = k.cloud && k.write.length < 32;
+    importBtn.hidden = !k.cloud || k.write.length < 32;
+  }
   const form = el("form", "cg-form");
   const url = el("input"); url.type = "url"; url.required = true; url.placeholder = "ChatGPT のチャットURL（/c/…）"; url.setAttribute("aria-label", "チャットURL");
   const title = el("input"); title.type = "text"; title.placeholder = "題（任意）"; title.setAttribute("aria-label", "チャットの題"); title.maxLength = 120;
   const addBtn = el("button", "cg-btn", "登録"); addBtn.type = "submit";
   form.append(url, title, addBtn);
+  const importBtn = el("button", "cg-btn", "この端末の既存記録を同期（既存の同期台帳は上書きしない）");
+  importBtn.type = "button"; importBtn.hidden = true;
   const status = el("div", "cg-status");
   const list = el("div");
-  inner.append(form, status, list);
+  inner.append(form, importBtn, status, list);
   let rendering = 0;
   async function render() {
     const n = ++rendering;
@@ -157,6 +215,9 @@
       if (n !== rendering) return;
       const open = rows.filter(c => !c.closedAt).sort((a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt));
       const closed = rows.filter(c => c.closedAt).sort((a, b) => Date.parse(b.closedAt) - Date.parse(a.closedAt));
+      visibleRevisions.clear();
+      for (const c of rows) if (Number.isSafeInteger(c.revision)) visibleRevisions.set(c.id, c.revision);
+      modeText();
       count.textContent = `開いているチャット ${open.length} 件`;
       list.textContent = "";
       if (!open.length) list.append(el("div", "cg-empty", "登録されたチャットはありません。拡張機能でChatGPTを開くか、上でURLを登録してください。"));
@@ -167,7 +228,7 @@
         for (const c of closed) details.append(chatRow(c));
         list.append(details);
       }
-    } catch (_) { if (n === rendering) say("このブラウザの保存領域を読めませんでした。設定を確認してください。", true); }
+    } catch (e) { if (n === rendering) say(syncKeys().cloud ? (e.message === "incomplete" ? "同期台帳が表示上限を超えました。" : "同期先を読めません（鍵・通信・設定を確認）。") : "保存領域を読めませんでした。", true); }
   }
   function chatRow(c) {
     const row = el("div", "cg-row");
@@ -176,8 +237,9 @@
     body.append(el("div", "cg-meta", `ブラウザで確認 ${fmt(c.observedAt)}${c.url.includes("/g/g-") ? " ・プロジェクト内" : ""}`));
     if (c.memo) body.append(el("div", "cg-memo", c.memo));
     const actions = el("div", "cg-acts");
+    const viewOnly = syncKeys().cloud && syncKeys().write.length < 32;
     const edit = el("button", "cg-btn", "メモを直す");
-    edit.type = "button";
+    edit.type = "button"; edit.disabled = viewOnly;
     edit.onclick = () => {
       if (actions.querySelector("textarea")) return;
       const base = { memo: c.memo || "", version: c.memoVersion || 0 };
@@ -194,13 +256,13 @@
           });
           if (res === "conflict") return say("別画面でメモが変更されました。更新後に直してください（上書きしていません）。", true);
           say("メモを保存しました。"); await render();
-        } catch (_) { say("メモを保存できませんでした。", true); }
+        } catch (e) { say(e.message === "conflict" ? "他の端末で変更されています。更新後に直してください。" : "メモ保存失敗（同期先・鍵を確認）。", true); }
       };
       actions.append(ta, save, cancel); ta.focus();
     };
     actions.append(edit);
     const toggle = el("button", "cg-btn", c.closedAt ? "戻す" : "外す");
-    toggle.type = "button";
+    toggle.type = "button"; toggle.disabled = viewOnly;
     let armed = false;
     toggle.onclick = async () => {
       if (!c.closedAt && !armed) {
@@ -216,7 +278,7 @@
         }));
         say(c.closedAt ? "一覧へ戻しました。" : "一覧から外しました。ChatGPT側の会話は削除していません。");
         await render();
-      } catch (_) { say("変更できませんでした。", true); }
+      } catch (e) { say(e.message === "conflict" ? "他の端末で状態が変わりました。更新してから操作してください。" : "変更できませんでした（通信・鍵を確認）。", true); }
     };
     actions.append(toggle);
     body.append(actions);
@@ -232,8 +294,27 @@
     if (!canonical(url.value)) return say("ChatGPTの通常チャットURL（/c/…）を入れてください。共有リンクは自動登録の対象外です。", true);
     try {
       await add(url.value, title.value, new Date().toISOString());
-      url.value = ""; title.value = ""; say("登録しました（このブラウザ内）。"); await render();
+      url.value = ""; title.value = ""; say(syncKeys().cloud ? "同期台帳に登録しました。" : "登録しました（このブラウザ内）。"); await render();
     } catch (_) { say("保存できませんでした。", true); }
+  };
+  importBtn.onclick = async () => {
+    importBtn.disabled = true;
+    let imported = 0, skipped = 0, failed = 0;
+    try {
+      const local = (await localAll()).filter(c => c && canonical(c.url) && validTime(c.observedAt));
+      for (const c of local) {
+        try {
+          const r = await cloudCall("POST", "/import", "write", {
+            url: c.url, title: c.title || "", observedAt: c.observedAt, memo: c.memo || "", closedAt: c.closedAt || null,
+          });
+          if (r.inserted) imported++; else skipped++;
+        } catch (_) { failed++; }
+      }
+      say("同期：新規 " + imported + "件・既に登録済み " + skipped + "件・失敗 " + failed + "件。" +
+        (failed ? "失敗分は再実行できます。" : "元のローカル記録は削除していません。"), failed > 0);
+      await render();
+    } catch (_) { say("ローカル記録を読めませんでした。", true); }
+    finally { importBtn.disabled = false; }
   };
   reload.onclick = () => { requestExtension(); void render(); };
   tabs.addEventListener("click", e => {
@@ -253,6 +334,7 @@
   });
   window.addEventListener("message", async e => {
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.source !== extSource || e.data.type !== "snapshot") return;
+    if (syncKeys().cloud) return; // direct background upload owns cloud sync; never bulk-POST the 500-row local snapshot
     const entries = Array.isArray(e.data.entries) ? e.data.entries.slice(0, 500) : [];
     if (Number.isInteger(e.data.total) && e.data.total > 500) say(`拡張機能に${e.data.total}件あります。最新500件だけ同期しました（過去の記録は削除していません）。`, true);
     try {
@@ -260,5 +342,6 @@
       if (!panel.hidden) await render();
     } catch (_) { say("拡張機能からの登録を保存できませんでした。", true); }
   });
+  window.addEventListener("hashchange", () => { if (!panel.hidden) void render(); });
   requestExtension();
 })();
