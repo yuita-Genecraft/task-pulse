@@ -16,7 +16,8 @@
     const stamp = cleanUrl + "\u0000" + title;
     if (lastSent === stamp) return;
     lastSent = stamp;
-    void chrome.storage.local.set({ ["tp_gpt_" + id]: { url: cleanUrl, title, observedAt: new Date().toISOString() } })
+    void chrome.runtime.sendMessage({ type: "capture", url: cleanUrl, title })
+      .then(r => { if (!r || !r.ok) { if (lastSent === stamp) lastSent = ""; } })
       .catch(() => { if (lastSent === stamp) lastSent = ""; });
   }
   const heading = document.querySelector("title");
