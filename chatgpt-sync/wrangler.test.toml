@@ -1,0 +1,16 @@
+# Ephemeral CI-only Wrangler local D1 configuration. The tokens below are fixed
+# public test fixtures, NOT production credentials. No remote deployment target.
+name = "taskpulse-chatgpt-d1-local-test"
+main = "worker.mjs"
+compatibility_date = "2026-10-10"
+
+[vars]
+READ_TOKEN = "local-test-read-token-aaaaaaaaaaaaaaaaaa"
+WRITE_TOKEN = "local-test-write-token-bbbbbbbbbbbbbbbbbb"
+CAPTURE_TOKEN = "local-test-capture-token-cccccccccccccccccc"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "taskpulse-chatgpt-local-test"
+database_id = "00000000-0000-4000-8000-000000000001"
+migrations_dir = "migrations"
