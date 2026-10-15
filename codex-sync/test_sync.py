@@ -57,4 +57,38 @@ class MetadataSync(unittest.TestCase):
             self.assertEqual(requests[-1]['action'],'leaveProject')
             self.assertNotIn('title',requests[-1])
 
+    def test_explicit_selection_is_narrow_and_removal_withdraws_the_record(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p=Path(folder);database=p/'state.sqlite';c=sqlite3.connect(database)
+            c.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,thread_source,source,project_id)')
+            outside='11234567-89ab-4cde-8fab-0123456789ab'
+            agent='21234567-89ab-4cde-8fab-0123456789ab'
+            for ident,kind in [(ID,'user'),(outside,'user'),(agent,'subagent')]:
+                c.execute('INSERT INTO threads VALUES (?,?,?,NULL,?,NULL,0,?,?,NULL)',(ident,'safe title',1792000000,1792000010,kind,'vscode'))
+            c.commit();c.close()
+            self.assertEqual(list(sync.records(database)),[])
+            selected=sync.validate_selection([ID,agent,ID])
+            self.assertEqual([x['url'] for x in sync.records(database,selected_threads=selected)],['codex://threads/'+ID])
+            config=p/'config.json';value={'database':str(database),'captureToken':'c'*40,'includedThreadIds':[ID]};config.write_text(json.dumps(value))
+            uploads=[]
+            class Response:
+                status=200
+                def __enter__(self): return self
+                def __exit__(self,*args): pass
+                def read(self): return b'{"ok":true}'
+            def send(request,timeout): uploads.append(json.loads(request.data));return Response()
+            with patch.object(sync.urllib.request,'urlopen',side_effect=send):
+                self.assertEqual(sync.synchronize(config),1)
+                self.assertEqual(sync.synchronize(config),0)
+                self.assertEqual(len(uploads),1)
+                self.assertEqual(uploads[0]['url'],'codex://threads/'+ID)
+                value['includedThreadIds']=[];config.write_text(json.dumps(value))
+                self.assertEqual(sync.synchronize(config),1)
+                self.assertEqual(uploads[-1]['action'],'leaveProject')
+                self.assertEqual(sync.synchronize(config),0)
+                for bad in ['*',[outside,'*'],[None],[ID]*201]:
+                    value['includedThreadIds']=bad;config.write_text(json.dumps(value))
+                    with self.assertRaises(ValueError):sync.synchronize(config)
+                self.assertEqual(len(uploads),2,'invalid selection must not send anything')
+
 if __name__=='__main__': unittest.main()

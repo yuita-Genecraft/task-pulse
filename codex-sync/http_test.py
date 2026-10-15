@@ -69,5 +69,16 @@ with tempfile.TemporaryDirectory() as folder:
     except StopIteration:
         pass
     assert sync.synchronize(config)==0
+    value=json.loads(config.read_text());value['includedThreadIds']=[ID];config.write_text(json.dumps(value))
+    assert sync.synchronize(config)==1
+    assert stored()['projectId']==sync.PROJECT_ID, 'explicitly selected unassigned chat enters Task Pulse shared group'
+    assert sync.synchronize(config)==0
+    value['includedThreadIds']=[];config.write_text(json.dumps(value))
+    assert sync.synchronize(config)==1
+    try:
+        stored();raise AssertionError('deselected unassigned chat remains visible')
+    except StopIteration:
+        pass
+    assert sync.synchronize(config)==0
     db.close()
-print('PASS collector -> Worker -> real local D1: late name, rename, deduplication, instruction resume, project departure')
+print('PASS collector -> Worker -> real local D1: late name, rename, deduplication, instruction resume, project departure, explicit selection/removal')
