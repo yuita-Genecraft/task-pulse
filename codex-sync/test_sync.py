@@ -45,5 +45,6 @@ class MetadataSync(unittest.TestCase):
                 c=sqlite3.connect(db);c.execute('UPDATE threads SET name=? WHERE id=?',('新しい題',ID));c.commit();c.close()
                 self.assertEqual(sync.synchronize(config),1)
             self.assertEqual(len(requests),2)
+            self.assertGreater(requests[0]['observedAt'], result[0]['observedAt'])
 
 if __name__=='__main__': unittest.main()

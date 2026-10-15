@@ -240,7 +240,7 @@ for (const KIND of ['chatgpt', 'codex']) (() => {
     const row = el("div", "cg-row");
     const body = el("div", "cg-body");
     body.append(el("div", "cg-title", c.title || "（題なし）"));
-    body.append(el("div", "cg-meta", `${KIND === "codex" ? "Macで更新" : "ブラウザで確認"} ${fmt(c.observedAt)}${c.url.includes("/g/g-") ? " ・プロジェクト内" : ""}`));
+    body.append(el("div", "cg-meta", `${KIND === "codex" ? "Macで確認" : "ブラウザで確認"} ${fmt(c.observedAt)}${c.url.includes("/g/g-") ? " ・プロジェクト内" : ""}`));
     if (c.memo) body.append(el("div", "cg-memo", c.memo));
     const actions = el("div", "cg-acts");
     const viewOnly = syncKeys().cloud && syncKeys().write.length < 32;
@@ -343,7 +343,7 @@ for (const KIND of ['chatgpt', 'codex']) (() => {
     if (KIND !== "chatgpt") return;
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.source !== extSource || e.data.type !== "snapshot") return;
     if (syncKeys().cloud) {
-      say("自動登録拡張機能：接続済み");
+      say("拡張機能と通信できました。登録済み一覧は「更新」で確認できます。");
       return; // Background owns cloud sync; never bulk-POST the snapshot.
     }
     const entries = Array.isArray(e.data.entries) ? e.data.entries.slice(0, 500) : [];

@@ -75,7 +75,14 @@ def synchronize(config_path):
             key = record['url']
             if state.get(key) == signature:
                 continue
-            request = urllib.request.Request(API + '/codex/capture', data=encoded,
+            # The signature above tracks source activity/name changes. The
+            # server timestamp describes this observation, so a late display
+            # name can supersede an earlier unnamed observation at the same
+            # user-recency time. Merely polling does not change the signature.
+            upload = dict(record, observedAt=dt.datetime.now(dt.timezone.utc)
+                          .isoformat(timespec='milliseconds').replace('+00:00', 'Z'))
+            request = urllib.request.Request(API + '/codex/capture',
+                data=json.dumps(upload, ensure_ascii=False).encode(),
                 headers={'Content-Type':'application/json', 'Authorization':'Bearer ' + token}, method='POST')
             # No raw network errors are logged: they can contain credentials or metadata.
             with urllib.request.urlopen(request, timeout=10) as response:

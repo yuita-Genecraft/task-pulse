@@ -13,6 +13,10 @@ as `Codex 新しいチャット` until the app's display name becomes available.
 SQLite is opened with `mode=ro`. The service watches the database and WAL,
 throttles starts to ten seconds, and retries once per minute for missed events or
 offline failures. Unchanged records produce no request. It never wakes a model.
+Each upload records the time the collector observed the changed metadata. Its
+deduplication signature uses the source's name and user-recency instead, so an
+unchanged poll does not upload and a late name is not lost behind an older
+user-recency timestamp. The UI labels this time as “Macで確認”.
 Remote captures preserve memos and explicit closure. Archiving/deleting a local
 chat does not automatically close its Task Pulse record.
 

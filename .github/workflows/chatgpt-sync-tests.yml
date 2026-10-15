@@ -61,3 +61,4 @@ jobs:
             tail -n 120 "$RUNNER_TEMP/chatgpt-wrangler.log"
             exit 1
           fi
+          python3 codex-sync/http_test.py
