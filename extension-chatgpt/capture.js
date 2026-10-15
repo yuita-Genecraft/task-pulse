@@ -1,15 +1,24 @@
 // URL/title/time and author/turn identifiers only; never read prompt/message text.
 (() => {
   "use strict";
-  const pattern = /^\/(?:g\/g-[A-Za-z0-9_-]{1,160}\/)?c\/([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$/;
+  const pattern = /^\/g\/g-p-6ab08ead99b88191ab18129fe14730d9(?:-[A-Za-z0-9_-]+)?\/c\/([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$/;
   const composer = 'form[data-thread-find-composer], form[data-composer-placement], form:has(#prompt-textarea)';
-  let lastUrl = "", lastSent = "", lastActivity = "", pendingInstruction = null;
+  let lastUrl = "", lastSent = "", lastActivity = "", pendingInstruction = null, lastExcluded = "";
   function capture(activityAt = null) {
     if (document.visibilityState !== "visible" && !activityAt) return;
     const u = new URL(location.href);
     if (u.protocol !== "https:" || u.hostname !== "chatgpt.com") return;
     const match = pattern.exec(u.pathname);
-    if (!match) return;
+    if (!match) {
+      lastSent = "";
+      const outside = /\/c\/([0-9a-f-]{36})$/i.exec(u.pathname);
+      if (outside && lastExcluded !== outside[1]) {
+        lastExcluded = outside[1];
+        void chrome.runtime.sendMessage({type:'leaveProject',url:'https://chatgpt.com/c/'+outside[1].toLowerCase()}).catch(()=>{lastExcluded='';});
+      }
+      return;
+    }
+    lastExcluded = "";
     const cleanUrl = "https://chatgpt.com" + u.pathname.slice(0, -match[1].length) + match[1].toLowerCase();
     const title = document.title.replace(/\s+[-|]\s+ChatGPT$/i, "").trim().slice(0, 160);
     const stamp = cleanUrl + "\u0000" + title;
@@ -36,7 +45,7 @@
     return last;
   }
   function armInstruction(event) {
-    if (!event.isTrusted || !event.target?.closest?.(composer)) return;
+    if (!event.isTrusted || !pattern.test(new URL(location.href).pathname) || !event.target?.closest?.(composer)) return;
     if (event.type === 'keydown' && (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing)) return;
     if (event.type === 'click') {
       const button = event.target.closest('button');

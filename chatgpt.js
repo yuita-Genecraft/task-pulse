@@ -31,8 +31,9 @@ for (const KIND of ['chatgpt', 'codex']) (() => {
   const DB = "taskpulse-" + KIND + "-local-v1";
   const STORE = "chats";
   const MAX_MEMO = 500;
+  const PROJECT_ID = "g-p-6ab08ead99b88191ab18129fe14730d9";
   const uuid = "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}";
-  const pathRe = new RegExp("^/(?:g/g-[A-Za-z0-9_-]{1,160}/)?c/(" + uuid + ")$");
+  const pathRe = new RegExp("^/g/" + PROJECT_ID + "(?:-[A-Za-z0-9_-]+)?/c/(" + uuid + ")$");
   const extSource = "taskpulse-chatgpt-extension";
   const pageSource = "taskpulse-chatgpt-page";
   const dbReady = new Promise((resolve, reject) => {
@@ -198,13 +199,13 @@ for (const KIND of ['chatgpt', 'codex']) (() => {
   function modeText() {
     const k = syncKeys();
     hint.textContent = k.cloud
-      ? (KIND === "codex" ? "このMacのCodexチャットを自動登録します。本文は取得しません。「開く」はCodexをインストールしたMacで使えます。" : "同期モード：PC・iPhone共通の台帳。拡張機能の自動登録は専用登録鍵が必要です。ChatGPTの会話本文は取得しません。")
+      ? (KIND === "codex" ? "「Claudeセカンドオピニオン」PJ所属のCodexチャットだけを自動登録します。PJ未所属は対象外です。本文は取得しません。「開く」はCodexをインストールしたMacで使えます。" : "「Claudeセカンドオピニオン」PJ内のみ。PC・iPhone共通の一覧です。ChatGPTの会話本文は取得しません。")
       : "ローカルモード：このブラウザ内の記録です。同期にはWorkerとブックマークのgptread/gptwriteが必要です。";
-    form.hidden = k.cloud && k.write.length < 32;
-    importBtn.hidden = !k.cloud || k.write.length < 32;
+    form.hidden = KIND === "codex" || (k.cloud && k.write.length < 32);
+    importBtn.hidden = KIND === "codex" || !k.cloud || k.write.length < 32;
   }
   const form = el("form", "cg-form");
-  const url = el("input"); url.type = "text"; url.required = true; url.placeholder = KIND === "codex" ? "codex://threads/…" : "ChatGPT のチャットURL（/c/…）"; url.setAttribute("aria-label", "チャットURL");
+  const url = el("input"); url.type = "text"; url.required = true; url.placeholder = KIND === "codex" ? "codex://threads/…" : "共同PJ内のチャットURL"; url.setAttribute("aria-label", "チャットURL");
   const title = el("input"); title.type = "text"; title.placeholder = "題（任意）"; title.setAttribute("aria-label", "チャットの題"); title.maxLength = 120;
   const addBtn = el("button", "cg-btn", "登録"); addBtn.type = "submit";
   form.append(url, title, addBtn);
@@ -217,7 +218,7 @@ for (const KIND of ['chatgpt', 'codex']) (() => {
   async function render() {
     const n = ++rendering;
     try {
-      const rows = (await all()).filter(c => c && canonical(c.url) && validTime(c.observedAt));
+      const rows = (await all()).filter(c => c && canonical(c.url) && (KIND !== "codex" || c.projectId === PROJECT_ID) && validTime(c.observedAt));
       if (n !== rendering) return;
       const open = rows.filter(c => !c.closedAt).sort((a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt));
       const closed = rows.filter(c => c.closedAt).sort((a, b) => Date.parse(b.closedAt) - Date.parse(a.closedAt));
@@ -298,7 +299,7 @@ for (const KIND of ['chatgpt', 'codex']) (() => {
   }
   form.onsubmit = async e => {
     e.preventDefault();
-    if (!canonical(url.value)) return say(KIND === "codex" ? "CodexのチャットURL（codex://threads/…）を入れてください。" : "ChatGPTの通常チャットURL（/c/…）を入れてください。共有リンクは対象外です。", true);
+    if (!canonical(url.value)) return say(KIND === "codex" ? "CodexのチャットURL（codex://threads/…）を入れてください。" : "「Claudeセカンドオピニオン」PJ内のチャットURLを入れてください。", true);
     try {
       await add(url.value, title.value, new Date().toISOString());
       url.value = ""; title.value = ""; say(syncKeys().cloud ? "同期台帳に登録しました。" : "登録しました（このブラウザ内）。"); await render();
@@ -308,7 +309,7 @@ for (const KIND of ['chatgpt', 'codex']) (() => {
     importBtn.disabled = true;
     let imported = 0, skipped = 0, failed = 0;
     try {
-      const local = (await localAll()).filter(c => c && canonical(c.url) && validTime(c.observedAt));
+      const local = (await localAll()).filter(c => c && canonical(c.url) && (KIND !== "codex" || c.projectId === PROJECT_ID) && validTime(c.observedAt));
       for (const c of local) {
         try {
           const r = await cloudCall("POST", "/import", "write", {

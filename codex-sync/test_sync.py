@@ -15,15 +15,17 @@ class MetadataSync(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             p=Path(folder);db=p/'state.sqlite'
             c=sqlite3.connect(db)
-            c.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,has_user_event,thread_source,source,first_user_message)')
-            def insert(id,source,archived=0):
-                c.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?,?,?)',(id,'題\n名',1792000000,None,1792000010,None,archived,0,source,'vscode','DO NOT TRANSMIT'))
+            c.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,has_user_event,thread_source,source,first_user_message,project_id)')
+            def insert(id,source,archived=0,project=sync.PROJECT_ID):
+                c.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',(id,'題\n名',1792000000,None,1792000010,None,archived,0,source,'vscode','DO NOT TRANSMIT',project))
             insert(ID,'user');insert('11234567-89ab-4cde-8fab-0123456789ab','subagent');insert('21234567-89ab-4cde-8fab-0123456789ab','user',1)
+            insert('31234567-89ab-4cde-8fab-0123456789ab','user',project=None)
+            insert('41234567-89ab-4cde-8fab-0123456789ab','user',project='other-project')
             c.commit();c.close()
             config=p/'config.json';config.write_text(json.dumps({'database':str(db),'captureToken':'c'*40}))
             result=list(sync.records(db))
             self.assertEqual(len(result),1)
-            self.assertEqual(set(result[0]),{'url','title','observedAt','activityAt'})
+            self.assertEqual(set(result[0]),{'url','title','observedAt','activityAt','projectId'})
             self.assertEqual(result[0]['title'],'題 名')
             self.assertNotIn('DO NOT TRANSMIT',json.dumps(result))
             requests=[]
@@ -48,5 +50,11 @@ class MetadataSync(unittest.TestCase):
             self.assertEqual(len(requests),2)
             self.assertGreater(requests[0]['observedAt'], result[0]['observedAt'])
             self.assertEqual(requests[0]['activityAt'],result[0]['observedAt'])
+            c=sqlite3.connect(db);c.execute('UPDATE threads SET project_id=NULL WHERE id=?',(ID,));c.commit();c.close()
+            with patch.object(sync.urllib.request,'urlopen',side_effect=send):
+                self.assertEqual(sync.synchronize(config),1)
+                self.assertEqual(sync.synchronize(config),0)
+            self.assertEqual(requests[-1]['action'],'leaveProject')
+            self.assertNotIn('title',requests[-1])
 
 if __name__=='__main__': unittest.main()

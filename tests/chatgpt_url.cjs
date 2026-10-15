@@ -5,6 +5,7 @@ const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '..', 'chatgpt.js'), 'utf8');
 const defs = [
   'const KIND = \"chatgpt\";',
+  source.match(/^  const PROJECT_ID = .*;$/m)?.[0],
   source.match(/^  const uuid = .*;$/m)?.[0],
   source.match(/^  const pathRe = .*;$/m)?.[0],
   source.match(/  const cleanTitle = \(s\) => \{[\s\S]*?\n  \};/)?.[0],
@@ -13,13 +14,15 @@ const defs = [
 assert(defs.every(Boolean), 'normalizer source missing');
 const { canonical, cleanTitle } = new Function(defs.join('\n') + '\nreturn {canonical,cleanTitle}')( );
 const id = '01234567-89ab-4cde-8fab-0123456789ab';
-const root = 'https://chatgpt.com/c/' + id;
-const project = 'https://chatgpt.com/g/g-12345-test/c/' + id;
+const root = 'https://chatgpt.com/g/g-p-6ab08ead99b88191ab18129fe14730d9/c/' + id;
+const project = 'https://chatgpt.com/g/g-p-6ab08ead99b88191ab18129fe14730d9-shared/c/' + id;
 assert.deepEqual(canonical(root), { id, url: root });
 assert.deepEqual(canonical(root.slice(0,-36) + id.toUpperCase()), { id, url: root });
 assert.deepEqual(canonical(project + '?sensitive=1#secret'), { id, url: project });
 assert.equal(canonical(root.replace('/c/', '/C/')), null);
 for (const s of [
+  'https://chatgpt.com/c/' + id,
+  'https://chatgpt.com/g/g-other/c/' + id,
   'http://chatgpt.com/c/' + id,
   'https://chatgpt.com.evil.org/c/' + id,
   'https://user:pass@chatgpt.com/c/' + id,
