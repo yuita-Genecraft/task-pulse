@@ -45,11 +45,16 @@ class MetadataSync(unittest.TestCase):
             with patch.object(sync.urllib.request,'urlopen',side_effect=send):
                 self.assertEqual(sync.synchronize(config),1)
                 self.assertEqual(sync.synchronize(config),0)
+                # Selecting an already-acknowledged member still refreshes its scope.
+                value=json.loads(config.read_text());value['includedThreadIds']=[ID];config.write_text(json.dumps(value))
+                self.assertEqual(sync.synchronize(config),1)
+                self.assertEqual(sync.synchronize(config),0)
                 c=sqlite3.connect(db);c.execute('UPDATE threads SET name=? WHERE id=?',('新しい題',ID));c.commit();c.close()
                 self.assertEqual(sync.synchronize(config),1)
-            self.assertEqual(len(requests),2)
+            self.assertEqual(len(requests),3)
             self.assertGreater(requests[0]['observedAt'], result[0]['observedAt'])
             self.assertEqual(requests[0]['activityAt'],result[0]['observedAt'])
+            value=json.loads(config.read_text());value['includedThreadIds']=[];config.write_text(json.dumps(value))
             c=sqlite3.connect(db);c.execute('UPDATE threads SET project_id=NULL WHERE id=?',(ID,));c.commit();c.close()
             with patch.object(sync.urllib.request,'urlopen',side_effect=send):
                 self.assertEqual(sync.synchronize(config),1)

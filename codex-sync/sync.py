@@ -93,9 +93,11 @@ def synchronize(config_path):
         for record in records(config['database'], include_departures=True, selected_threads=selected_threads):
             if record.get('action') == 'leaveProject' and record['url'] not in state:
                 continue  # Never send metadata for an unrelated, never-tracked chat.
-            # Keep existing fingerprints stable; activity is already represented
-            # by the source-recency value in observedAt.
-            encoded = json.dumps({k:v for k,v in record.items() if k != 'activityAt'},
+            # Source activity is represented by observedAt. Scope selection also
+            # participates so changing policy forces a fresh observation.
+            fingerprint = {k:v for k,v in record.items() if k != 'activityAt'}
+            fingerprint['_explicitSelection'] = record['url'].rsplit('/',1)[-1] in selected_threads
+            encoded = json.dumps(fingerprint,
                                  ensure_ascii=False, sort_keys=True).encode()
             signature = hashlib.sha256(encoded).hexdigest()
             key = record['url']
