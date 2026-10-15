@@ -12,6 +12,7 @@ import sqlite3
 import urllib.request
 
 PROJECT_ID = 'g-p-6ab08ead99b88191ab18129fe14730d9'
+PROJECT_MIRROR = str(Path.home() / '.codex' / '.chatgpt-projects' / PROJECT_ID)
 API = 'https://taskpulse-chatgpt.gooooerer.workers.dev'
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -24,20 +25,22 @@ def validate_selection(value):
 
 
 def records(database, include_departures=False, selected_threads=()):
-    # SQLite opens read-only; explicit columns exclude message bodies and paths.
+    # The app's exact project mirror is a local fallback when its ID is absent.
+    # A conflicting non-null project ID takes precedence. Paths never leave SQL.
     db = sqlite3.connect(Path(database).as_uri() + '?mode=ro', uri=True, timeout=3)
     db.row_factory = sqlite3.Row
     try:
         db.execute("BEGIN")
         slots = ','.join('?' for _ in selected_threads)
-        membership = 'project_id=?' + (' OR id IN (' + slots + ')' if slots else '')
-        parameters = (PROJECT_ID,) + tuple(selected_threads)
+        membership = '(project_id=? OR (project_id IS NULL AND cwd=?))' + (' OR id IN (' + slots + ')' if slots else '')
+        parameters = (PROJECT_ID, PROJECT_MIRROR) + tuple(selected_threads)
         rows = db.execute(f'''SELECT id,name,created_at,created_at_ms,recency_at,recency_at_ms,project_id
             FROM threads WHERE archived=0 AND ({membership})
             AND (thread_source IN ('user','voice_chat') OR
                  (thread_source IS NULL AND source IN ('vscode','cli','exec')))
             ORDER BY created_at ASC''', parameters).fetchall()
         departures = db.execute('SELECT id FROM threads WHERE (project_id IS NULL OR project_id <> ?)' +
+            ' AND (project_id IS NOT NULL OR cwd IS NULL OR cwd <> ?)' +
             (' AND id NOT IN (' + slots + ')' if slots else ''), parameters).fetchall() if include_departures else []
     finally:
         db.close()
