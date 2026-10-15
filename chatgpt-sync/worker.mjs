@@ -1,5 +1,6 @@
 // ChatGPT chat registry, separate from handoff-mcp. Deploy is NOT automatic.
 // Never log tokens, URLs, titles or memo bodies.
+const PROJECT_ID = 'g-p-6ab08ead99b88191ab18129fe14730d9';
 const SITE = 'https://yuita-genecraft.github.io';
 const URL_ID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const URL_PATTERN = new RegExp('^/(?:g/g-[A-Za-z0-9_-]{1,160}/)?c/(' + URL_ID + ')$', 'i');
@@ -40,6 +41,12 @@ export function parseObservation(raw, now = Date.now()) {
   if (!Number.isFinite(t) || t < Date.UTC(2023, 0, 1) || t > now + 300000) return null;
   return new Date(Math.min(t, now)).toISOString();
 }
+export function scopedProject(url) {
+  try {
+    const segment = new URL(url).pathname.split('/')[2] || '';
+    return segment === PROJECT_ID || segment.startsWith(PROJECT_ID + '-');
+  } catch { return false; }
+}
 export function memoValue(raw) {
   if (typeof raw !== 'string') return null;
   const s = raw.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g, ' ').trim();
@@ -73,6 +80,7 @@ async function body(request) {
 function projectRow(r) {
   return {
     id: r.id, url: r.url, title: r.title, observedAt: r.observed_at,
+    projectId: r.project_id,
     memo: r.memo, memoVersion: r.revision, revision: r.revision, closedAt: r.closed_at,
   };
 }
@@ -82,6 +90,7 @@ export async function handle(request, env) {
   const path = codex ? originalPath.slice(6) : originalPath;
   const table = codex ? 'codex_chat' : 'gpt_chat';
   const normalize = codex ? canonicalCodex : canonical;
+  const scope = `project_id = '${PROJECT_ID}'`;
   const method = request.method;
   const origin = corsOrigin(request, originalPath, method);
   if (origin === null) return send({ error: 'not_found' }, 404);
@@ -106,13 +115,30 @@ export async function handle(request, env) {
   if (!auth) return send({ error: 'not_found' }, 404, origin);
   if (!env.DB || typeof env.DB.prepare !== 'function') return send({ error: 'unavailable' }, 503, origin);
   if (isGet) {
-    const totalRow = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first();
-    const result = await env.DB.prepare(`SELECT * FROM ${table} ORDER BY observed_at DESC, id ASC LIMIT ?`).bind(MAX_ROWS).all();
+    const totalRow = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${scope}`).first();
+    const result = await env.DB.prepare(`SELECT * FROM ${table} WHERE ${scope} ORDER BY observed_at DESC, id ASC LIMIT ?`).bind(MAX_ROWS).all();
     const chats = (result.results || []).map(projectRow);
     return send({ chats, total: totalRow.n, limited: totalRow.n > MAX_ROWS }, 200, origin);
   }
+  if (isPatch) {
+    const eligible = await env.DB.prepare(`SELECT * FROM ${table} WHERE id=? AND ${scope}`).bind(match[1]).first();
+    if (!eligible) return send({ error: 'unknown_chat' }, 404, origin);
+  }
   const input = await body(request);
   if (!input) return send({ error: 'invalid_json' }, 400, origin);
+  if (isCapture && input.action === 'leaveProject') {
+    const c = normalize(input.url), when = parseObservation(input.observedAt);
+    if (!c || !when) return send({ error: 'invalid_capture' }, 400, origin);
+    // Identity and time only: no destination-project title, URL or body stored.
+    await env.DB.prepare(`UPDATE ${table} SET project_id=NULL,scope_observed_at=? WHERE id=? AND scope_observed_at < ?`)
+      .bind(when, c.id, when).run();
+    return send({ ok: true }, 200, origin);
+  }
+  if (isImport || isCapture) {
+    const candidate = normalize(input.url);
+    if (candidate && (codex ? input.projectId !== PROJECT_ID : !scopedProject(candidate.url)))
+      return send({ error: 'outside_project' }, 400, origin);
+  }
   if (isImport) {
     const c = normalize(input.url);
     const when = parseObservation(input.observedAt);
@@ -122,9 +148,9 @@ export async function handle(request, env) {
       return send({ error: 'invalid_import' }, 400, origin);
     // Explicit user import is create-only. Existing records are never overwritten.
     const inserted = await env.DB.prepare(
-      `INSERT INTO ${table}(id,url,title,observed_at,memo,closed_at) VALUES (?,?,?,?,?,?) ` +
+      `INSERT INTO ${table}(id,url,title,observed_at,memo,closed_at,project_id,scope_observed_at) VALUES (?,?,?,?,?,?,?,?) ` +
       "ON CONFLICT(id) DO NOTHING RETURNING id"
-    ).bind(c.id, c.url, cleanText(input.title,120), when, memo, closeAt).first();
+    ).bind(c.id, c.url, cleanText(input.title,120), when, memo, closeAt, PROJECT_ID, when).first();
     return send({ ok: true, inserted: !!inserted }, 200, origin);
   }
   if (isCapture) {
@@ -141,17 +167,19 @@ export async function handle(request, env) {
       return send({ error: 'invalid_activity' }, 400, origin);
     const title = cleanText(input.title, 120);
     await env.DB.prepare(
-      `INSERT INTO ${table} (id,url,title,observed_at) VALUES (?,?,?,?) ` +
+      `INSERT INTO ${table} (id,url,title,observed_at,project_id,scope_observed_at) VALUES (?,?,?,?,?,?) ` +
       "ON CONFLICT(id) DO UPDATE SET " +
       `url = CASE WHEN excluded.observed_at > ${table}.observed_at THEN excluded.url ELSE ${table}.url END, ` +
       `title = CASE WHEN excluded.title <> '' AND (excluded.observed_at > ${table}.observed_at OR ${table}.title = '') THEN excluded.title ELSE ${table}.title END, ` +
       `observed_at = MAX(${table}.observed_at,excluded.observed_at), ` +
+      `project_id = CASE WHEN excluded.scope_observed_at > ${table}.scope_observed_at THEN excluded.project_id ELSE ${table}.project_id END, ` +
+      `scope_observed_at = MAX(${table}.scope_observed_at,excluded.scope_observed_at), ` +
       // A new instruction can resume a closed chat. Plain observation/rename
       // never does. Use the instruction time, not the delayed upload time, so
       // a later close wins over older activity on clients with aligned clocks.
       `revision = ${table}.revision + CASE WHEN ? > ${table}.closed_at THEN 1 ELSE 0 END, ` +
       `closed_at = CASE WHEN ? > ${table}.closed_at THEN NULL ELSE ${table}.closed_at END`
-    ).bind(c.id, c.url, title, when, activityAt, activityAt).run();
+    ).bind(c.id, c.url, title, when, PROJECT_ID, when, activityAt, activityAt).run();
     return send({ ok: true }, 200, origin);
   }
   if (!Number.isSafeInteger(input.baseRevision) || input.baseRevision < 0 || !['memo', 'close', 'reopen'].includes(input.action))
@@ -160,18 +188,18 @@ export async function handle(request, env) {
   if (input.action === 'memo') {
     const memo = memoValue(input.memo);
     if (memo === null) return send({ error: 'invalid_memo' }, 400, origin);
-    sql = `UPDATE ${table} SET memo=?,revision=revision+1 WHERE id=? AND revision=? RETURNING *`;
+    sql = `UPDATE ${table} SET memo=?,revision=revision+1 WHERE id=? AND ${scope} AND revision=? RETURNING *`;
     args = [memo, match[1], input.baseRevision];
   } else if (input.action === 'close') {
-    sql = `UPDATE ${table} SET closed_at=?,revision=revision+1 WHERE id=? AND revision=? AND closed_at IS NULL RETURNING *`;
+    sql = `UPDATE ${table} SET closed_at=?,revision=revision+1 WHERE id=? AND ${scope} AND revision=? AND closed_at IS NULL RETURNING *`;
     args = [new Date().toISOString(), match[1], input.baseRevision];
   } else {
-    sql = `UPDATE ${table} SET closed_at=NULL,revision=revision+1 WHERE id=? AND revision=? AND closed_at IS NOT NULL RETURNING *`;
+    sql = `UPDATE ${table} SET closed_at=NULL,revision=revision+1 WHERE id=? AND ${scope} AND revision=? AND closed_at IS NOT NULL RETURNING *`;
     args = [match[1], input.baseRevision];
   }
   const changed = await env.DB.prepare(sql).bind(...args).first();
   if (changed) return send({ ok: true, chat: projectRow(changed) }, 200, origin);
-  const current = await env.DB.prepare(`SELECT * FROM ${table} WHERE id=?`).bind(match[1]).first();
+  const current = await env.DB.prepare(`SELECT * FROM ${table} WHERE id=? AND ${scope}`).bind(match[1]).first();
   return current ? send({ error: 'conflict', chat: projectRow(current) }, 409, origin) : send({ error: 'unknown_chat' }, 404, origin);
 }
 export default {

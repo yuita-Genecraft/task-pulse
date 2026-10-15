@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonical, parseObservation, memoValue, keysValid, handle } from '../worker.mjs';
+import { canonical, scopedProject, parseObservation, memoValue, keysValid, handle } from '../worker.mjs';
 
+const PROJECT_ID = 'g-p-6ab08ead99b88191ab18129fe14730d9';
 const ID = '6ac8be6a-bcb4-83ec-88fa-32d79a3cddf4';
-const URL1 = 'https://chatgpt.com/c/' + ID;
-const URL2 = 'https://chatgpt.com/g/g-projectA/c/' + ID;
+const URL1 = 'https://chatgpt.com/g/' + PROJECT_ID + '/c/' + ID;
+const URL2 = 'https://chatgpt.com/g/' + PROJECT_ID + '-shared/c/' + ID;
 const origin = 'https://yuita-genecraft.github.io';
 const envOf = (DB) => ({
   DB, READ_TOKEN: 'r'.repeat(40), WRITE_TOKEN: 'w'.repeat(40), CAPTURE_TOKEN: 'c'.repeat(40),
@@ -19,9 +20,9 @@ function mockDb() {
         bind(...v) { args = v; return stmt; },
         async first() {
           if (sql.startsWith('INSERT INTO gpt_chat')) {
-            const [id,url,title,when,memo,closedAt] = args;
+            const [id,url,title,when,memo,closedAt,projectId] = args;
             if (rows.has(id)) return null;
-            rows.set(id,{ id,url,title,observed_at:when,memo,revision:0,closed_at:closedAt });
+            rows.set(id,{ id,url,title,observed_at:when,memo,revision:0,closed_at:closedAt,project_id:projectId });
             return { id };
           }
           if (sql.startsWith('SELECT COUNT(*)')) return { n: rows.size };
@@ -46,14 +47,14 @@ function mockDb() {
           return null;
         },
         async all() {
-          if (!sql.startsWith('SELECT * FROM gpt_chat ORDER')) throw Error('unexpected all');
+          if (!sql.startsWith('SELECT * FROM gpt_chat WHERE')) throw Error('unexpected all');
           return { results: Array.from(rows.values()).sort((a,b) => b.observed_at.localeCompare(a.observed_at)).slice(0,args[0]) };
         },
         async run() {
           if (!sql.startsWith('INSERT INTO gpt_chat')) throw Error('unexpected run');
-          const [id, url, title, seen] = args;
+          const [id, url, title, seen,projectId] = args;
           const r = rows.get(id);
-          if (!r) rows.set(id,{ id, url, title, observed_at:seen, memo:'', revision:0, closed_at:null });
+          if (!r) rows.set(id,{ id, url, title, observed_at:seen, memo:'', revision:0, closed_at:null,project_id:projectId });
           else {
             if (seen > r.observed_at) r.url = url;
             if (title && (seen > r.observed_at || !r.title)) r.title = title;
@@ -121,10 +122,10 @@ test('auth isolation, CORS, capture monotonicity and CAS', async () => {
   assert.equal((await r.json()).chat.closedAt,null);
   r=await handle(request('/import','POST',env.CAPTURE_TOKEN,{url:URL1,title:'No',observedAt:'2026-10-10T00:03:00Z',memo:'No',closedAt:null}),env);
   assert.equal(r.status,404,'capture token must not import memos');
-  r=await handle(request('/import','POST',env.WRITE_TOKEN,{url:'https://chatgpt.com/c/3b5c73c2-aaaa-bbbb-cccc-0123456789ab',title:'Imported',observedAt:'2026-10-10T00:03:00Z',memo:'private memo',closedAt:null}),env);
+  r=await handle(request('/import','POST',env.WRITE_TOKEN,{url:'https://chatgpt.com/g/'+PROJECT_ID+'/c/3b5c73c2-aaaa-bbbb-cccc-0123456789ab',title:'Imported',observedAt:'2026-10-10T00:03:00Z',memo:'private memo',closedAt:null}),env);
   assert.equal(r.status,200);
   assert.equal((await r.json()).inserted,true);
-  r=await handle(request('/import','POST',env.WRITE_TOKEN,{url:'https://chatgpt.com/c/3b5c73c2-aaaa-bbbb-cccc-0123456789ab',title:'Overwrite',observedAt:'2026-10-10T00:04:00Z',memo:'bad',closedAt:null}),env);
+  r=await handle(request('/import','POST',env.WRITE_TOKEN,{url:'https://chatgpt.com/g/'+PROJECT_ID+'/c/3b5c73c2-aaaa-bbbb-cccc-0123456789ab',title:'Overwrite',observedAt:'2026-10-10T00:04:00Z',memo:'bad',closedAt:null}),env);
   assert.equal((await r.json()).inserted,false,'import must never overwrite existing');
   assert.equal(DB.rows.get('3b5c73c2-aaaa-bbbb-cccc-0123456789ab').memo,'private memo');
 });
@@ -139,4 +140,16 @@ test('CORS preflight only on configured UI and capture-only extension', async ()
   assert.equal(r.headers.get('access-control-allow-origin'),ext);
   r=await handle(request('/chats','OPTIONS','',undefined,{origin:ext}),env);
   assert.equal(r.status,404);
+});
+
+test('capture and import reject unrelated and unassigned project chats',async()=>{
+ const DB=mockDb(),env=envOf(DB);
+ for(const url of ['https://chatgpt.com/c/'+ID,'https://chatgpt.com/g/'+PROJECT_ID+'0/c/'+ID,'https://chatgpt.com/g/g-p-other/c/'+ID]) {
+  assert.equal(scopedProject(url),false);
+  const payload={url,title:'outside',observedAt:new Date().toISOString(),memo:'',closedAt:null};
+  for(const path of ['/capture','/import']) {
+   const r=await handle(request(path,'POST',env.WRITE_TOKEN,payload),env);assert.equal(r.status,400);
+  }
+ }
+ assert.equal(DB.rows.size,0);
 });

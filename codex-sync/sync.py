@@ -11,20 +11,23 @@ import re
 import sqlite3
 import urllib.request
 
+PROJECT_ID = 'g-p-6ab08ead99b88191ab18129fe14730d9'
 API = 'https://taskpulse-chatgpt.gooooerer.workers.dev'
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
 
-def records(database):
+def records(database, include_departures=False):
     # SQLite opens read-only; explicit columns exclude message bodies and paths.
     db = sqlite3.connect(Path(database).as_uri() + '?mode=ro', uri=True, timeout=3)
     db.row_factory = sqlite3.Row
     try:
-        rows = db.execute('''SELECT id,name,created_at,created_at_ms,recency_at,recency_at_ms
-            FROM threads WHERE archived=0
+        db.execute("BEGIN")
+        rows = db.execute('''SELECT id,name,created_at,created_at_ms,recency_at,recency_at_ms,project_id
+            FROM threads WHERE archived=0 AND project_id=?
             AND (thread_source IN ('user','voice_chat') OR
                  (thread_source IS NULL AND source IN ('vscode','cli','exec')))
-            ORDER BY created_at ASC''').fetchall()
+            ORDER BY created_at ASC''', (PROJECT_ID,)).fetchall()
+        departures = db.execute('SELECT id FROM threads WHERE project_id IS NULL OR project_id <> ?', (PROJECT_ID,)).fetchall() if include_departures else []
     finally:
         db.close()
     for row in rows:
@@ -38,11 +41,15 @@ def records(database):
         # is the app's display name; never fall back to the message-backed field.
         title = re.sub(r'[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]', ' ', row['name'] or 'Codex 新しいチャット')
         title = re.sub(r'https?://\S+', '[リンク]', title)
-        yield {'url': 'codex://threads/' + row['id'],
+        yield {'projectId': PROJECT_ID, 'url': 'codex://threads/' + row['id'],
                'title': ' '.join(title.split())[:120],
                'observedAt': when.isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
                'activityAt': when.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
                    if (row['recency_at_ms'] or row['recency_at']) else None}
+
+    for row in departures:
+        if UUID.fullmatch(row['id']):
+            yield {'url':'codex://threads/'+row['id'], 'action':'leaveProject'}
 
 
 def atomic(path, value):
@@ -71,7 +78,9 @@ def synchronize(config_path):
         except (FileNotFoundError, ValueError):
             state = {}
         sent = 0
-        for record in records(config['database']):
+        for record in records(config['database'], include_departures=True):
+            if record.get('action') == 'leaveProject' and record['url'] not in state:
+                continue  # Never send metadata for an unrelated, never-tracked chat.
             # Keep existing fingerprints stable; activity is already represented
             # by the source-recency value in observedAt.
             encoded = json.dumps({k:v for k,v in record.items() if k != 'activityAt'},

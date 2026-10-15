@@ -23,9 +23,9 @@ with tempfile.TemporaryDirectory() as folder:
     root = Path(folder)
     database = root / 'state.sqlite'
     db = sqlite3.connect(database)
-    db.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,thread_source,source)')
-    db.execute('INSERT INTO threads VALUES (?,?,?,NULL,?,NULL,0,?,?)',
-               (ID, None, 1792000000, 1792000000, 'user', 'vscode'))
+    db.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,thread_source,source,project_id)')
+    db.execute('INSERT INTO threads VALUES (?,?,?,NULL,?,NULL,0,?,?,?)',
+               (ID, None, 1792000000, 1792000000, 'user', 'vscode',sync.PROJECT_ID))
     db.commit()
     config = root / 'config.json'
     config.write_text(json.dumps({'database': str(database),
@@ -61,5 +61,13 @@ with tempfile.TemporaryDirectory() as folder:
     assert sync.synchronize(config)==1
     assert stored()['closedAt'] is None, 'a new user instruction resumes the chat'
     assert sync.synchronize(config)==0
+    db.execute('UPDATE threads SET project_id=NULL WHERE id=?',(ID,));db.commit()
+    assert sync.synchronize(config)==1
+    try:
+        stored()
+        raise AssertionError('out-of-project chat remains visible')
+    except StopIteration:
+        pass
+    assert sync.synchronize(config)==0
     db.close()
-print('PASS collector -> Worker -> real local D1: late name, rename, deduplication, instruction resume')
+print('PASS collector -> Worker -> real local D1: late name, rename, deduplication, instruction resume, project departure')

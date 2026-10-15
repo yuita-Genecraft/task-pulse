@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 const source = fs.readFileSync(__dirname+'/capture.js','utf8');
-function page() {
-  const events={}, win={}, observers=[], timers=[], sent=[];
+function page(href) {
+  const events={}, win={}, observers=[], timers=[], sent=[], intervals=[];
   let turns=[];
   const turn=id=>({id:'',getAttribute:n=>n==='data-turn-key'?id:null,
     querySelectorAll:()=>[{textContent:'あなたの発言:'}],
@@ -14,12 +14,13 @@ function page() {
     querySelector:()=>({}),querySelectorAll:()=>turns,
     addEventListener:(name,handler)=>{events[name]=handler;}};
   const context={document:doc,window:{addEventListener:(n,h)=>win[n]=h},
-    location:{href:'https://chatgpt.com/c/01234567-89ab-4cde-8fab-0123456789ab'},
+    location:{href:href || 'https://chatgpt.com/g/g-p-6ab08ead99b88191ab18129fe14730d9-claudesekantoohinion/c/01234567-89ab-4cde-8fab-0123456789ab'},
     MutationObserver:class{constructor(cb){this.cb=cb;}observe(){observers.push(this.cb);}},
-    setTimeout:cb=>timers.push(cb),setInterval:()=>{},URL,Date,
+    setTimeout:cb=>timers.push(cb),setInterval:cb=>intervals.push(cb),URL,Date,
     chrome:{runtime:{sendMessage:m=>{sent.push(m);return Promise.resolve({ok:true});}}}};
   vm.runInNewContext(source,context);
   return {sent,events,win,context,doc,
+    navigate(url){context.location.href=url;for(const cb of intervals)cb();},
     interact(type,extra={}) {const button=extra.sendButton?{disabled:false,type:'submit',getAttribute:()=>null}:null;
       events[type]({type,isTrusted:true,key:'Enter',target:{closest:s=>s==='button'?button:{}},...extra});},
     mutate(id,prepend=false) {if(id) prepend?turns.unshift(turn(id)):turns.push(turn(id));
@@ -44,7 +45,7 @@ test('send-button submission works; focus, history prepend, IME and untrusted ev
   const synthetic=page();synthetic.interact('submit',{isTrusted:false});synthetic.mutate('synthetic');assert.equal(synthetic.sent.length,1);
 });
 test('navigation cancels an armed instruction and ordinary focus carries no resume signal',()=>{
-  const p=page();p.interact('submit');p.context.location.href='https://chatgpt.com/c/11234567-89ab-4cde-8fab-0123456789ab';
+  const p=page();p.interact('submit');p.context.location.href='https://chatgpt.com/g/g-p-6ab08ead99b88191ab18129fe14730d9-claudesekantoohinion/c/11234567-89ab-4cde-8fab-0123456789ab';
   p.mutate('another-chat-user-turn');assert.equal(p.sent.length,1);
   p.win.focus();assert.equal(p.sent.length,2);assert.equal(p.sent[1].activityAt,undefined);
 });
@@ -57,4 +58,19 @@ test('confirmed instruction is queued after the tab becomes hidden',()=>{
 test('remounting a turn without a stable identifier cannot resume a chat',()=>{
   const p=page();p.replaceUnidentified();p.interact('keydown');p.replaceUnidentified();
   assert.equal(p.sent.length,1);
+});
+
+test('unrelated project and unassigned chats are never captured',()=>{
+ for(const url of ['https://chatgpt.com/c/01234567-89ab-4cde-8fab-0123456789ab',
+ 'https://chatgpt.com/g/g-p-00000000000000000000000000000000-other/c/01234567-89ab-4cde-8fab-0123456789ab']) {
+  const p=page(url);p.interact('keydown');p.mutate('a-new-instruction');assert.ok(p.sent.every(m=>m.type==='leaveProject'));
+  assert.ok(p.sent.every(m=>!m.title && !m.activityAt),'only unscoped identity is passed to background');
+ }
+});
+
+test('same URL and title are captured again after leaving and returning to the project',()=>{
+ const p=page(),original=p.context.location.href;
+ p.navigate('https://chatgpt.com/c/01234567-89ab-4cde-8fab-0123456789ab');
+ assert.equal(p.sent.at(-1).type,'leaveProject');
+ p.navigate(original);assert.equal(p.sent.at(-1).type,'capture');assert.equal(p.sent.length,3);
 });

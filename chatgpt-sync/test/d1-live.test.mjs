@@ -11,8 +11,9 @@ const W = "local-test-write-token-bbbbbbbbbbbbbbbbbb";
 const C = "local-test-capture-token-cccccccccccccccccc";
 const ID = "6ac8be6a-bcb4-83ec-88fa-32d79a3cddf4";
 const ID2 = "c34bf78a-9745-456b-8b6a-d00f9221c222";
-const URL = "https://chatgpt.com/c/" + ID;
-const U2 = "https://chatgpt.com/g/g-accepted_pj/c/" + ID2;
+const PROJECT_ID = "g-p-6ab08ead99b88191ab18129fe14730d9";
+const URL = "https://chatgpt.com/g/"+PROJECT_ID+"/c/" + ID;
+const U2 = "https://chatgpt.com/g/g-p-6ab08ead99b88191ab18129fe14730d9-shared/c/" + ID2;
 const observedAt = () => new Date().toISOString();
 
 async function send(path, {method = "GET", token = "", body, origin = SITE} = {}) {
@@ -131,7 +132,7 @@ test("Wrangler local D1: schema + auth + CAS + close/reopen + import", {timeout:
 
 test('Codex uses separate rows, strict deep links and the same edit protections', async () => {
   const CDEX = 'codex://threads/' + ID;
-  const payload = {url:CDEX,title:'Codex native',observedAt:observedAt()};
+  const payload = {projectId:PROJECT_ID,url:CDEX,title:'Codex native',observedAt:observedAt()};
   let x = await send('/codex/capture',{method:'POST',token:C,body:payload});
   assert.equal(x.response.status,200,JSON.stringify(x.json));
   x = await send('/codex/chats',{token:R});
@@ -160,9 +161,9 @@ test('Codex uses separate rows, strict deep links and the same edit protections'
 test('only a new instruction after close resumes an existing chat; stale queues and observations cannot', async()=>{
   for(const prefix of ['', '/codex']) {
     const id='a1234567-89ab-4cde-8fab-0123456789ab';
-    const url=prefix?'codex://threads/'+id:'https://chatgpt.com/c/'+id;
+    const url=prefix?'codex://threads/'+id:'https://chatgpt.com/g/'+PROJECT_ID+'/c/'+id;
     const old=new Date(Date.now()-60000).toISOString();
-    const capture=extra=>send(prefix+'/capture',{method:'POST',token:C,body:{url,title:'existing',observedAt:observedAt(),...extra}});
+    const capture=extra=>send(prefix+'/capture',{method:'POST',token:C,body:{projectId:PROJECT_ID,url,title:'existing',observedAt:observedAt(),...extra}});
     let x=await capture({activityAt:old});assert.equal(x.response.status,200);
     x=await send(prefix+'/chats/'+id,{method:'PATCH',token:W,body:{action:'memo',baseRevision:0,memo:'preserve'}});assert.equal(x.response.status,200);
     x=await send(prefix+'/chats/'+id,{method:'PATCH',token:W,body:{action:'close',baseRevision:1}});assert.equal(x.response.status,200);
@@ -181,4 +182,40 @@ test('only a new instruction after close resumes an existing chat; stale queues 
     x=await send(prefix+'/chats/'+id,{method:'PATCH',token:W,body:{action:'close',baseRevision:3}});assert.equal(x.response.status,200);
     await capture({activityAt});row=await get();assert.ok(row.closedAt,'queued old instruction must not undo later close');assert.equal(row.revision,4);assert.equal(row.memo,'preserve');
   }
+});
+
+test('shared project boundary applies to capture and import for both clients',async()=>{
+ const id='f1234567-89ab-4cde-8fab-0123456789ab';
+ for(const prefix of ['', '/codex']) {
+  const before=await send(prefix+'/chats',{token:R});
+  const urls=prefix?['codex://threads/'+id]:[
+    'https://chatgpt.com/c/'+id,
+    'https://chatgpt.com/g/'+PROJECT_ID+'0/c/'+id,
+    'https://chatgpt.com/g/g-p-00000000000000000000000000000000/c/'+id];
+  for(const url of urls) for(const path of ['/capture','/import']) {
+   const x=await send(prefix+path,{method:'POST',token:W,body:{url,title:'outside',observedAt:observedAt(),memo:'',closedAt:null}});
+   assert.equal(x.response.status,400,'membership must be proven before registering');
+  }
+  const after=await send(prefix+'/chats',{token:R});assert.equal(after.json.total,before.json.total);
+ }
+});
+
+test('leaving the shared project hides tracked rows and delayed older captures cannot restore membership',async()=>{
+ const id='e1234567-89ab-4cde-8fab-0123456789ab';
+ for(const prefix of ['', '/codex']) {
+  const url=prefix?'codex://threads/'+id:'https://chatgpt.com/g/'+PROJECT_ID+'/c/'+id;
+  const old=observedAt();
+  const payload={url,projectId:PROJECT_ID,title:'tracked member',observedAt:old};
+  let x=await send(prefix+'/capture',{method:'POST',token:C,body:payload});assert.equal(x.response.status,200);
+  const listed=async()=>{const r=await send(prefix+'/chats',{token:R});return r.json.chats.some(c=>c.id===id);};
+  assert.equal(await listed(),true);
+  await new Promise(r=>setTimeout(r,20));
+  x=await send(prefix+'/capture',{method:'POST',token:C,body:{url:prefix?url:'https://chatgpt.com/c/'+id,action:'leaveProject',observedAt:observedAt()}});assert.equal(x.response.status,200);
+  assert.equal(await listed(),false);
+  x=await send(prefix+'/capture',{method:'POST',token:C,body:payload});assert.equal(x.response.status,200);
+  assert.equal(await listed(),false,'queued membership before departure cannot restore visibility');
+  x=await send(prefix+'/chats/'+id,{method:'PATCH',token:W,body:{action:'reopen',baseRevision:0}});assert.equal(x.response.status,404,'outside row cannot be edited or restored manually');
+  x=await send(prefix+'/capture',{method:'POST',token:C,body:{...payload,observedAt:observedAt()}});assert.equal(x.response.status,200);
+  assert.equal(await listed(),true,'observed return to target project restores membership');
+ }
 });

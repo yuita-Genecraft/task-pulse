@@ -30,9 +30,11 @@ jobs:
           node --check chatgpt-sync/test/worker.test.mjs
           node --check chatgpt-sync/test/d1-live.test.mjs
       - name: Codex metadata collector regression
-        run: python3 -m unittest discover -s codex-sync -p 'test_*.py'
+        run: |
+          python3 -m unittest discover -s codex-sync -p 'test_*.py'
+          python3 chatgpt-sync/test/migration_test.py
       - name: Deterministic mock-D1 regression tests
-        run: node --test chatgpt-sync/test/worker.test.mjs extension-chatgpt/*.test.cjs
+        run: node --test tests/chatgpt_url.cjs chatgpt-sync/test/worker.test.mjs extension-chatgpt/*.test.cjs
 
   wrangler-d1-local:
     runs-on: ubuntu-latest

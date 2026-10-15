@@ -1,8 +1,12 @@
-# ChatGPT / Codex registry (Worker deployed; desktop acceptance in progress)
+# ChatGPT / Codex registry — shared project only
 
 This is a separate Cloudflare Worker and D1 table. It does not write to the handoff-mcp database or reuse its GRAPH_READ_TOKEN, CHATS_WRITE_TOKEN or MCP credential.
 
 **Live URL**: `https://taskpulse-chatgpt.gooooerer.workers.dev`. Deployed on 2026-10-15 after explicit user approval and independent source review. Active Worker version at deployment: `45fa7d3e-1544-4930-9030-94f57ebf9b39`; dedicated D1: `744b431c-4b95-4f8e-bf9d-4cec0077cb0b` (APAC).
+
+Scope is fixed to **Claudeセカンドオピニオン** (`g-p-6ab08ead99b88191ab18129fe14730d9`), as explicitly requested on 2026-10-15. Other projects and unassigned chats cannot be captured/imported or returned/edited through the registry. ChatGPT membership comes from its project URL; Codex membership comes from `threads.project_id`. Unknown membership is excluded. Migration 0003 preserves all old rows and memos; prior Codex rows with unknown membership remain hidden. The UI also excludes unscoped local records, and Codex manual registration/import are unavailable because a deep link does not prove project membership.
+
+Previously tracked chats observed outside the project send an identity-and-time-only `leaveProject` capture, clearing visibility without deleting the record or collecting the new project's title/body/identity. Older queued captures cannot restore membership after a newer departure observation. Membership is last observed, not continuously queried from ChatGPT history: an unobserved move cannot be discovered until that chat is opened again; Codex checks its metadata snapshot each run. Client/server clock alignment is assumed for observation ordering.
 
 Stored: ChatGPT canonical conversation URL, title, last observation time, a user memo (up to 500 code points), user-closed time, monotonically increasing edit revision. No message body, session cookie, ChatGPT API key, share link, or user account identity is collected.
 
@@ -21,7 +25,8 @@ The Chrome extension records only when a normal ChatGPT conversation is opened; 
 ## API
 
 - `GET /chats`: up to 1000 newest chats; returns `total` and `limited` (so excess never masquerades as a complete list).
-- `POST /capture`: JSON `{url,title,observedAt,activityAt?}`; URL restricted to ChatGPT's own /c/:uuid or /g/g-.../c/:uuid. Shared links excluded. Newest observation wins. Preserves `memo`. If valid instruction activity is later than `closed_at`, clears closure and increments `revision`; ordinary observation preserves closure/revision.
+- `POST /capture`: JSON `{url,title,observedAt,activityAt?,projectId?}` (Codex requires the allowed `projectId`); URL restricted to ChatGPT's own /c/:uuid or /g/g-.../c/:uuid. Shared links excluded. Newest observation wins. Preserves `memo`. If valid instruction activity is later than `closed_at`, clears closure and increments `revision`; ordinary observation preserves closure/revision.
+- `POST /capture`: `{action:"leaveProject",url,observedAt}` removes an already tracked identity from the project scope; it never creates a new row.
 - `PATCH /chats/:id`: JSON `{action:"memo"|"close"|"reopen",baseRevision,memo?}`. Database CAS; stale rev returns 409 and current row.
 
 CORS: only `https://yuita-genecraft.github.io` for UI; for capture, scoped Chrome extension origins. Other origins and unknown credentials 404. Not a substitute for strong user authentication; bearer tokens still confer their listed capabilities.
@@ -62,7 +67,7 @@ installation. Independent review found a late-name/rename timestamp issue; it
 was fixed and the collector-to-Worker-to-local-D1 regression was added before
 deployment. A follow-up review found no remaining source blocker.
 
-Both remote migrations are applied. The native launchd collector uploaded 13
+Initial deployment applied migrations 0001/0002. The shared-project update requires migration 0003. Before project restriction, the native launchd collector uploaded 13
 actual unarchived main chats, including the active task, and the authenticated
 registry read returned the same current display name. A named API client
 (`TaskPulseCodex/0.3`) is required because the default Python urllib identity

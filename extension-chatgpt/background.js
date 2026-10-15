@@ -2,7 +2,7 @@
 const DEST = 'https://taskpulse-chatgpt.gooooerer.workers.dev/capture';
 const SITE = 'https://yuita-genecraft.github.io';
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-const chatPath = new RegExp('^/(?:g/g-[A-Za-z0-9_-]{1,160}/)?c/(' + UUID + ')$', 'i');
+const chatPath = new RegExp('^/g/g-p-6ab08ead99b88191ab18129fe14730d9(?:-[A-Za-z0-9_-]+)?/c/(' + UUID + ')$', 'i');
 const pendingKey = id => 'tp_pending_' + id;
 const entryKey = id => 'tp_gpt_' + id;
 let storageWork = Promise.resolve();
@@ -38,6 +38,25 @@ function canonical(s) {
     return { id, url: 'https://chatgpt.com' + u.pathname.slice(0, -m[1].length) + id };
   } catch { return null; }
 }
+function trackedIdentity(raw) {
+  try {
+    const u=new URL(raw);
+    const m=new RegExp('/c/('+UUID+')$', 'i').exec(u.pathname);
+    return u.origin==='https://chatgpt.com' && m ? m[1].toLowerCase() : null;
+  } catch { return null; }
+}
+async function leaveProject(message) {
+  await protectedStorage;
+  const id=trackedIdentity(message.url);
+  if (!id) return false;
+  await serializedStorage(async()=>{
+    const previous=(await chrome.storage.local.get(entryKey(id)))[entryKey(id)];
+    if (!previous || previous.outOfProject) return;
+    const record={action:'leaveProject',url:'https://chatgpt.com/c/'+id,observedAt:new Date().toISOString()};
+    await chrome.storage.local.set({[entryKey(id)]:{...previous,outOfProject:true},[pendingKey(id)]:record});
+  });
+  void flush();return true;
+}
 async function storeCapture(message) {
   await protectedStorage;
   const c = canonical(message.url);
@@ -66,10 +85,10 @@ async function flush() {
     const token = opt.captureToken;
     if (typeof token !== 'string' || token.length < 32) return;
     const all = await chrome.storage.local.get(null);
-    const queued = Object.entries(all).filter(([key]) => /^tp_pending_[0-9a-f-]{36}$/.test(key))
+    const queued = Object.entries(all).filter(([key,payload]) => /^tp_pending_[0-9a-f-]{36}$/.test(key) && (canonical(payload?.url) || (payload?.action === 'leaveProject' && trackedIdentity(payload.url))))
       .sort((a,b) => Date.parse(a[1]?.observedAt) - Date.parse(b[1]?.observedAt)).slice(0, 50);
     for (const [key, payload] of queued) {
-      if (!payload || !canonical(payload.url)) continue;
+      if (!payload || !(canonical(payload.url) || (payload.action === 'leaveProject' && trackedIdentity(payload.url)))) continue;
       let res;
       try {
         res = await fetch(DEST, {
@@ -100,11 +119,12 @@ function fromPulse(sender) {
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   (async () => {
     await protectedStorage;
+    if (message?.type === 'leaveProject' && fromChatGPT(sender)) return { ok: await leaveProject(message) };
     if (message?.type === 'capture' && fromChatGPT(sender)) return { ok: await storeCapture(message) };
     if (message?.type === 'snapshot' && fromPulse(sender)) {
       const all = await chrome.storage.local.get(null);
       const entries = Object.entries(all).filter(([key]) => /^tp_gpt_[0-9a-f-]{36}$/.test(key))
-        .map(([, record]) => record).sort((a,b) => Date.parse(b?.observedAt) - Date.parse(a?.observedAt));
+        .map(([, record]) => record).filter(record => !record?.outOfProject && canonical(record?.url)).sort((a,b) => Date.parse(b?.observedAt) - Date.parse(a?.observedAt));
       return { ok: true, entries: entries.slice(0, 500), total: entries.length };
     }
     if (message?.type === 'flush' && sender.url?.startsWith(chrome.runtime.getURL('options.html'))) {

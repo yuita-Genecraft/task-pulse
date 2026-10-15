@@ -4,7 +4,7 @@ Task Pulse gains a separate Codex tab. A per-user launchd service reads only the
 local Codex `threads` metadata and uploads changed records to
 `https://taskpulse-chatgpt.gooooerer.workers.dev/codex/capture`.
 
-The collector selects `id`, `name`, creation and user-recency timestamps. It does
+Only the **Claudeセカンドオピニオン** project (`g-p-6ab08ead99b88191ab18129fe14730d9`) is eligible. The collector selects `id`, `name`, project ID, creation and user-recency timestamps for matching rows. It reads only IDs for other memberships, solely to withdraw previously tracked records; never-tracked outside chats are not uploaded. Both queries share a read-only SQLite transaction. A missing row or failed database read is not treated as a project departure. It does
 not select the database's `title` field (which can contain the first prompt),
 `first_user_message`, rollout contents, cwd, authentication files, or logs.
 Subagent/guardian and archived rows are excluded. An unnamed main chat is shown
@@ -22,7 +22,7 @@ chat does not automatically close its Task Pulse record.
 
 ## Prepare and install
 
-First deploy the separately approved registry and apply both SQL migrations.
+First deploy the separately approved registry and apply all three SQL migrations.
 Use three distinct credentials for READ, WRITE and CAPTURE. Native sync and the
 Chrome extension receive only CAPTURE; Task Pulse receives READ/WRITE in its
 bookmark fragment (`gptread`/`gptwrite`). No credential belongs in source control.
@@ -53,3 +53,5 @@ Tests: `python3 -m unittest discover -s codex-sync -p 'test_*.py'`,
 `node --test tests/chatgpt_url.cjs chatgpt-sync/test/worker.test.mjs`, and the
 Wrangler local-D1 HTTP tests. Local tests and a preview are not a production
 deployment or proof that a real Chrome extension has been installed.
+
+Project scope is strict: on 2026-10-15 all 13 previously collected local main chats had `project_id=NULL`; these records remain preserved but are no longer displayed. A Codex chat must have the exact allowed project ID in app metadata to be collected. If the app does not expose membership there, collection stays empty rather than guessing from a title or directory. Positive membership-to-native-upload behavior is covered by local fixtures; real app membership assignment is a separate acceptance item.
