@@ -7,18 +7,22 @@ from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+from sync import validate_selection
 
 parser=argparse.ArgumentParser()
 parser.add_argument('--credential-file',required=True,help='protected JSON with CAPTURE_TOKEN')
+parser.add_argument('--include-thread', action='append', help='explicitly select one Codex UUID for the Task Pulse shared group; repeatable')
 args=parser.parse_args()
 credentials=json.loads(Path(args.credential_file).read_text())
 token=credentials['CAPTURE_TOKEN']
 if not isinstance(token,str) or not 32<=len(token)<=256: raise SystemExit('invalid credential')
 base=Path.home()/'Library/Application Support/TaskPulseCodex'
 base.mkdir(parents=True,exist_ok=True);os.chmod(base,0o700)
-shutil.copy2(Path(__file__).with_name('sync.py'),base/'sync.py')
 config=base/'config.json'
-config.write_text(json.dumps({'database':str(Path.home()/'.codex/state_5.sqlite'),'captureToken':token}));os.chmod(config,0o600)
+existing=json.loads(config.read_text()) if config.exists() else {}
+selected=validate_selection(args.include_thread if args.include_thread is not None else existing.get('includedThreadIds', []))
+shutil.copy2(Path(__file__).with_name('sync.py'),base/'sync.py')
+config.write_text(json.dumps({'database':str(Path.home()/'.codex/state_5.sqlite'),'captureToken':token,'includedThreadIds':list(selected)}));os.chmod(config,0o600)
 agent=Path.home()/'Library/LaunchAgents/com.yuita.taskpulse-codex.plist'
 content={'Label':'com.yuita.taskpulse-codex',
  'ProgramArguments':['/usr/bin/python3',str(base/'sync.py'),'--config',str(config)],

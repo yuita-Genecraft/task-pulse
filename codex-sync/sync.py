@@ -16,18 +16,29 @@ API = 'https://taskpulse-chatgpt.gooooerer.workers.dev'
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
 
-def records(database, include_departures=False):
+def validate_selection(value):
+    if not isinstance(value, list) or len(value) > 200 or any(
+            not isinstance(item, str) or not UUID.fullmatch(item) for item in value):
+        raise ValueError('invalid includedThreadIds')
+    return tuple(sorted(set(value)))
+
+
+def records(database, include_departures=False, selected_threads=()):
     # SQLite opens read-only; explicit columns exclude message bodies and paths.
     db = sqlite3.connect(Path(database).as_uri() + '?mode=ro', uri=True, timeout=3)
     db.row_factory = sqlite3.Row
     try:
         db.execute("BEGIN")
-        rows = db.execute('''SELECT id,name,created_at,created_at_ms,recency_at,recency_at_ms,project_id
-            FROM threads WHERE archived=0 AND project_id=?
+        slots = ','.join('?' for _ in selected_threads)
+        membership = 'project_id=?' + (' OR id IN (' + slots + ')' if slots else '')
+        parameters = (PROJECT_ID,) + tuple(selected_threads)
+        rows = db.execute(f'''SELECT id,name,created_at,created_at_ms,recency_at,recency_at_ms,project_id
+            FROM threads WHERE archived=0 AND ({membership})
             AND (thread_source IN ('user','voice_chat') OR
                  (thread_source IS NULL AND source IN ('vscode','cli','exec')))
-            ORDER BY created_at ASC''', (PROJECT_ID,)).fetchall()
-        departures = db.execute('SELECT id FROM threads WHERE project_id IS NULL OR project_id <> ?', (PROJECT_ID,)).fetchall() if include_departures else []
+            ORDER BY created_at ASC''', parameters).fetchall()
+        departures = db.execute('SELECT id FROM threads WHERE (project_id IS NULL OR project_id <> ?)' +
+            (' AND id NOT IN (' + slots + ')' if slots else ''), parameters).fetchall() if include_departures else []
     finally:
         db.close()
     for row in rows:
@@ -66,6 +77,7 @@ def synchronize(config_path):
     token = config['captureToken']
     if not isinstance(token, str) or not 32 <= len(token) <= 256:
         raise ValueError('capture credential missing')
+    selected_threads = validate_selection(config.get('includedThreadIds', []))
     storage = config_path.parent
     with open(storage / 'sync.lock', 'a') as lock:
         try:
@@ -78,12 +90,14 @@ def synchronize(config_path):
         except (FileNotFoundError, ValueError):
             state = {}
         sent = 0
-        for record in records(config['database'], include_departures=True):
+        for record in records(config['database'], include_departures=True, selected_threads=selected_threads):
             if record.get('action') == 'leaveProject' and record['url'] not in state:
                 continue  # Never send metadata for an unrelated, never-tracked chat.
-            # Keep existing fingerprints stable; activity is already represented
-            # by the source-recency value in observedAt.
-            encoded = json.dumps({k:v for k,v in record.items() if k != 'activityAt'},
+            # Source activity is represented by observedAt. Scope selection also
+            # participates so changing policy forces a fresh observation.
+            fingerprint = {k:v for k,v in record.items() if k != 'activityAt'}
+            fingerprint['_explicitSelection'] = record['url'].rsplit('/',1)[-1] in selected_threads
+            encoded = json.dumps(fingerprint,
                                  ensure_ascii=False, sort_keys=True).encode()
             signature = hashlib.sha256(encoded).hexdigest()
             key = record['url']
