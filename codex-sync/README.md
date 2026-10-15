@@ -17,7 +17,7 @@ Each upload records the time the collector observed the changed metadata. Its
 deduplication signature uses the source's name and user-recency instead, so an
 unchanged poll does not upload and a late name is not lost behind an older
 user-recency timestamp. The UI labels this time as “Macで確認”.
-Remote captures preserve memos and explicit closure. Archiving/deleting a local
+Remote captures preserve memos. Opening or renaming a chat preserves explicit closure; a new user-recency timestamp after closure resumes the record. Uploads include this source timestamp as `activityAt`, separately from metadata observation time. Ordering assumes aligned Mac/server clocks; future activity is ignored for resume. Archiving/deleting a local
 chat does not automatically close its Task Pulse record.
 
 ## Prepare and install

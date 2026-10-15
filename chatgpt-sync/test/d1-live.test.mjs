@@ -156,3 +156,29 @@ test('Codex uses separate rows, strict deep links and the same edit protections'
   x = await send('/codex/chats',{token:R});
   assert.equal(x.json.chats[0].closedAt,null);
 });
+
+test('only a new instruction after close resumes an existing chat; stale queues and observations cannot', async()=>{
+  for(const prefix of ['', '/codex']) {
+    const id='a1234567-89ab-4cde-8fab-0123456789ab';
+    const url=prefix?'codex://threads/'+id:'https://chatgpt.com/c/'+id;
+    const old=new Date(Date.now()-60000).toISOString();
+    const capture=extra=>send(prefix+'/capture',{method:'POST',token:C,body:{url,title:'existing',observedAt:observedAt(),...extra}});
+    let x=await capture({activityAt:old});assert.equal(x.response.status,200);
+    x=await send(prefix+'/chats/'+id,{method:'PATCH',token:W,body:{action:'memo',baseRevision:0,memo:'preserve'}});assert.equal(x.response.status,200);
+    x=await send(prefix+'/chats/'+id,{method:'PATCH',token:W,body:{action:'close',baseRevision:1}});assert.equal(x.response.status,200);
+    const get=async()=>{const r=await send(prefix+'/chats',{token:R});return r.json.chats.find(c=>c.id===id);};
+    await capture({});assert.ok((await get()).closedAt,'focus/observation must not reopen');
+    await capture({activityAt:old,title:'renamed'});assert.ok((await get()).closedAt,'rename with old user activity must not reopen');
+    x=await capture({activityAt:'invalid'});assert.equal(x.response.status,400);
+    const future=new Date(Date.now()+60000).toISOString();
+    x=await capture({observedAt:future,activityAt:future});assert.equal(x.response.status,200);
+    assert.ok((await get()).closedAt,'future client activity is not clamped into resume evidence');
+    await new Promise(resolve=>setTimeout(resolve,20));
+    const activityAt=observedAt();
+    x=await capture({activityAt});assert.equal(x.response.status,200);
+    let row=await get();assert.equal(row.closedAt,null);assert.equal(row.revision,3);assert.equal(row.memo,'preserve');
+    x=await send(prefix+'/chats/'+id,{method:'PATCH',token:W,body:{action:'memo',baseRevision:2,memo:'stale'}});assert.equal(x.response.status,409,'resume invalidates stale edit revisions');
+    x=await send(prefix+'/chats/'+id,{method:'PATCH',token:W,body:{action:'close',baseRevision:3}});assert.equal(x.response.status,200);
+    await capture({activityAt});row=await get();assert.ok(row.closedAt,'queued old instruction must not undo later close');assert.equal(row.revision,4);assert.equal(row.memo,'preserve');
+  }
+});

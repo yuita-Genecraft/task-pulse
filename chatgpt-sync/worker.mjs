@@ -130,16 +130,28 @@ export async function handle(request, env) {
   if (isCapture) {
     const c = normalize(input.url);
     const when = parseObservation(input.observedAt);
+    const activity = input.activityAt == null ? null : parseObservation(input.activityAt);
+    // Never turn a future client activity into a new server-time instruction.
+    // Accept its metadata, but ignore the resume signal when the clock is ahead.
+    const rawActivity = input.activityAt == null ? null : Date.parse(input.activityAt);
+    const activityAt = activity && rawActivity <= Date.now() ? new Date(rawActivity).toISOString() : null;
     if (!c || !when || typeof input.title !== 'string' || input.title.length > 2000)
       return send({ error: 'invalid_capture' }, 400, origin);
+    if (input.activityAt != null && (!activity || rawActivity > Date.parse(input.observedAt)))
+      return send({ error: 'invalid_activity' }, 400, origin);
     const title = cleanText(input.title, 120);
     await env.DB.prepare(
       `INSERT INTO ${table} (id,url,title,observed_at) VALUES (?,?,?,?) ` +
       "ON CONFLICT(id) DO UPDATE SET " +
       `url = CASE WHEN excluded.observed_at > ${table}.observed_at THEN excluded.url ELSE ${table}.url END, ` +
       `title = CASE WHEN excluded.title <> '' AND (excluded.observed_at > ${table}.observed_at OR ${table}.title = '') THEN excluded.title ELSE ${table}.title END, ` +
-      `observed_at = MAX(${table}.observed_at,excluded.observed_at)`
-    ).bind(c.id, c.url, title, when).run();
+      `observed_at = MAX(${table}.observed_at,excluded.observed_at), ` +
+      // A new instruction can resume a closed chat. Plain observation/rename
+      // never does. Use the instruction time, not the delayed upload time, so
+      // a later close wins over older activity on clients with aligned clocks.
+      `revision = ${table}.revision + CASE WHEN ? > ${table}.closed_at THEN 1 ELSE 0 END, ` +
+      `closed_at = CASE WHEN ? > ${table}.closed_at THEN NULL ELSE ${table}.closed_at END`
+    ).bind(c.id, c.url, title, when, activityAt, activityAt).run();
     return send({ ok: true }, 200, origin);
   }
   if (!Number.isSafeInteger(input.baseRevision) || input.baseRevision < 0 || !['memo', 'close', 'reopen'].includes(input.action))

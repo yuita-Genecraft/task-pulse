@@ -12,16 +12,16 @@ Three independent secrets (32–256 chars; different values; no fallback):
 
 - `READ_TOKEN`: only GET /chats.
 - `WRITE_TOKEN`: POST /capture and PATCH /chats/:id. Available in the trusted Task Pulse browser bookmark fragment as `gptwrite`, not in a request URL.
-- `CAPTURE_TOKEN`: only POST /capture. Stored in Chrome extension options (`chrome.storage.local`), sent to the *fixed* Worker. It cannot read the registry or change memos/closed state.
+- `CAPTURE_TOKEN`: only POST /capture. Stored in Chrome extension options (`chrome.storage.local`), sent to the *fixed* Worker. It cannot read the registry, edit memos, or explicitly close/reopen records. A capture with new instruction activity can resume a closed record as described below.
 
 The taskPulse page uses `gptread` and `gptwrite` from its URL fragment only; values must never be committed. A browser bookmark with secrets is a bearer credential: device/browser sync and same-origin scripts can read it. Secure storage, rotation, share scope, and leaked tokens must be assessed before production.
 
-The Chrome extension records only when a normal ChatGPT conversation is opened; it does not enumerate all history. An offline capture is retained locally and retried. Automatic capture never reopens a manually closed chat. iPhone can **view and edit the same registry in Safari/Chrome** after the bookmark is configured; automatic monitoring of iPhone's ChatGPT app is NOT supported.
+The Chrome extension records only when a normal ChatGPT conversation is opened; it does not enumerate all history. An offline capture is retained locally and retried. Opening/focusing a chat or renaming it never reopens a manually closed chat. Sending a new instruction after closure resumes it; Chrome requires a trusted composer action followed by a new stable user-turn identifier, while Codex uses the source user-recency timestamp. Message bodies are not read. Instruction times are client-reported: ordering against closure assumes aligned client/server clocks. Future activity is ignored for resumption rather than clamped to receipt time. This is not a proof of distributed physical event ordering under clock skew. iPhone can **view and edit the same registry in Safari/Chrome** after the bookmark is configured; automatic monitoring of iPhone's ChatGPT app is NOT supported.
 
 ## API
 
 - `GET /chats`: up to 1000 newest chats; returns `total` and `limited` (so excess never masquerades as a complete list).
-- `POST /capture`: JSON `{url,title,observedAt}`; URL restricted to ChatGPT's own /c/:uuid or /g/g-.../c/:uuid. Shared links excluded. Newest observation wins. Does not modify `memo`, `revision`, or `closed_at`.
+- `POST /capture`: JSON `{url,title,observedAt,activityAt?}`; URL restricted to ChatGPT's own /c/:uuid or /g/g-.../c/:uuid. Shared links excluded. Newest observation wins. Preserves `memo`. If valid instruction activity is later than `closed_at`, clears closure and increments `revision`; ordinary observation preserves closure/revision.
 - `PATCH /chats/:id`: JSON `{action:"memo"|"close"|"reopen",baseRevision,memo?}`. Database CAS; stale rev returns 409 and current row.
 
 CORS: only `https://yuita-genecraft.github.io` for UI; for capture, scoped Chrome extension origins. Other origins and unknown credentials 404. Not a substitute for strong user authentication; bearer tokens still confer their listed capabilities.
@@ -32,7 +32,7 @@ CORS: only `https://yuita-genecraft.github.io` for UI; for capture, scoped Chrom
 2. Provision a dedicated D1 and apply the migration. Approve exact database/account and any additional charges.
 3. Set three new secrets through approved secure operator path, not chat / GitHub. Validate they are all distinct.
 4. Approve the worker deployment after checking DNS, CORS and the actual Worker URL; update the fixed URL in UI+extension if required.
-5. Validate signed-in Chrome capture → Cloudflare D1 → taskPulse PC → iPhone real browser E2E, including permission failure, offline retry, conflict 409, stale observation, and closed-chat non-reopen.
+5. Validate signed-in Chrome capture → Cloudflare D1 → taskPulse PC → iPhone real browser E2E, including permission failure, offline retry, conflict 409, stale observation, and ordinary closed-chat non-reopen and new-instruction resume.
 6. Only after real E2E and required review, accept as ready. **Do not merge/deploy based on this Draft alone.**
 
 No tokens are shipped in this repository. GitHub merge, a successful unit test, Worker deploy and user acceptance are different statuses.

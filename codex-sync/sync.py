@@ -40,7 +40,9 @@ def records(database):
         title = re.sub(r'https?://\S+', '[リンク]', title)
         yield {'url': 'codex://threads/' + row['id'],
                'title': ' '.join(title.split())[:120],
-               'observedAt': when.isoformat(timespec='milliseconds').replace('+00:00', 'Z')}
+               'observedAt': when.isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
+               'activityAt': when.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+                   if (row['recency_at_ms'] or row['recency_at']) else None}
 
 
 def atomic(path, value):
@@ -70,7 +72,10 @@ def synchronize(config_path):
             state = {}
         sent = 0
         for record in records(config['database']):
-            encoded = json.dumps(record, ensure_ascii=False, sort_keys=True).encode()
+            # Keep existing fingerprints stable; activity is already represented
+            # by the source-recency value in observedAt.
+            encoded = json.dumps({k:v for k,v in record.items() if k != 'activityAt'},
+                                 ensure_ascii=False, sort_keys=True).encode()
             signature = hashlib.sha256(encoded).hexdigest()
             key = record['url']
             if state.get(key) == signature:

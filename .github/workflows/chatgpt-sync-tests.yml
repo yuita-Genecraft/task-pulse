@@ -32,7 +32,7 @@ jobs:
       - name: Codex metadata collector regression
         run: python3 -m unittest discover -s codex-sync -p 'test_*.py'
       - name: Deterministic mock-D1 regression tests
-        run: node --test chatgpt-sync/test/worker.test.mjs
+        run: node --test chatgpt-sync/test/worker.test.mjs extension-chatgpt/*.test.cjs
 
   wrangler-d1-local:
     runs-on: ubuntu-latest
