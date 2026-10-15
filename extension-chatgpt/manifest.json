@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Task Pulse — ChatGPT チャット登録",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "開いたChatGPTチャットのURL・題・確認時刻をTask Pulseへ自動登録します。会話本文は取得しません。",
   "permissions": [
     "storage",

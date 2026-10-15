@@ -5,6 +5,12 @@ const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const chatPath = new RegExp('^/(?:g/g-[A-Za-z0-9_-]{1,160}/)?c/(' + UUID + ')$', 'i');
 const pendingKey = id => 'tp_pending_' + id;
 const entryKey = id => 'tp_gpt_' + id;
+let storageWork = Promise.resolve();
+function serializedStorage(action) {
+  const next = storageWork.then(action);
+  storageWork = next.catch(() => {});
+  return next;
+}
 const protectedStorage = chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
 // A private operator-built package may contain only its upload credential.
 // Public source ships an empty object; read/write credentials never go here.
@@ -36,15 +42,23 @@ async function storeCapture(message) {
   await protectedStorage;
   const c = canonical(message.url);
   if (!c || typeof message.title !== 'string') return false;
-  const observedAt = new Date().toISOString(); // trusted extension clock, not page-provided timestamp
-  const record = { url: c.url, title: sanitizedTitle(message.title), observedAt };
-  await chrome.storage.local.set({ [entryKey(c.id)]: record, [pendingKey(c.id)]: record });
+  const t = message.activityAt == null ? null : Date.parse(message.activityAt);
+  if (t !== null && (!Number.isFinite(t) || t < Date.UTC(2023,0,1) || t > Date.now())) return false;
+  await serializedStorage(async () => {
+    const previous = (await chrome.storage.local.get(entryKey(c.id)))[entryKey(c.id)];
+    const oldActivity = Date.parse(previous?.activityAt || '') || 0;
+    const activity = Math.max(oldActivity, t || 0);
+    const record = { url:c.url, title:sanitizedTitle(message.title), observedAt:new Date().toISOString(),
+      ...(activity ? {activityAt:new Date(activity).toISOString()} : {}) };
+    await chrome.storage.local.set({[entryKey(c.id)]:record, [pendingKey(c.id)]:record});
+  });
   void flush();
   return true;
 }
 let flushing = false;
+let flushAgain = false;
 async function flush() {
-  if (flushing) return;
+  if (flushing) { flushAgain = true; return; }
   flushing = true;
   try {
     await credentialReady;
@@ -65,11 +79,17 @@ async function flush() {
         });
       } catch { return; }
       if (!res.ok) return; // No blind retry within this run; alarm will retry later.
-      const latest = (await chrome.storage.local.get(key))[key];
-      if (latest && latest.url === payload.url && latest.title === payload.title && latest.observedAt === payload.observedAt)
-        await chrome.storage.local.remove(key);
+      await serializedStorage(async () => {
+        const latest = (await chrome.storage.local.get(key))[key];
+        if (latest && latest.url === payload.url && latest.title === payload.title &&
+            latest.observedAt === payload.observedAt && latest.activityAt === payload.activityAt)
+          await chrome.storage.local.remove(key);
+      });
     }
-  } finally { flushing = false; }
+  } finally {
+    flushing = false;
+    if (flushAgain) { flushAgain = false; void flush(); }
+  }
 }
 function fromChatGPT(sender) {
   try { return new URL(sender.url).origin === 'https://chatgpt.com'; } catch { return false; }

@@ -47,5 +47,19 @@ with tempfile.TemporaryDirectory() as folder:
     assert sync.synchronize(config) == 1
     assert stored()['title'] == 'リネーム後'
     assert sync.synchronize(config) == 0
+    def close_current():
+        request=urllib.request.Request(sync.API+'/codex/chats/'+ID,
+            data=json.dumps({'action':'close','baseRevision':stored()['revision']}).encode(),
+            headers={'Authorization':'Bearer local-test-write-token-bbbbbbbbbbbbbbbbbb','Content-Type':'application/json'},method='PATCH')
+        with urllib.request.urlopen(request) as response: assert response.status==200
+    close_current()
+    db.execute('UPDATE threads SET name=? WHERE id=?',('題名だけ変更',ID));db.commit()
+    assert sync.synchronize(config)==1
+    assert stored()['closedAt'], 'rename alone must keep the chat closed'
+    time.sleep(0.02)
+    db.execute('UPDATE threads SET recency_at_ms=? WHERE id=?',(int(time.time()*1000),ID));db.commit()
+    assert sync.synchronize(config)==1
+    assert stored()['closedAt'] is None, 'a new user instruction resumes the chat'
+    assert sync.synchronize(config)==0
     db.close()
-print('PASS collector -> Worker -> real local D1: late name, rename, deduplication')
+print('PASS collector -> Worker -> real local D1: late name, rename, deduplication, instruction resume')

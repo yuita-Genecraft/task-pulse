@@ -23,7 +23,7 @@ class MetadataSync(unittest.TestCase):
             config=p/'config.json';config.write_text(json.dumps({'database':str(db),'captureToken':'c'*40}))
             result=list(sync.records(db))
             self.assertEqual(len(result),1)
-            self.assertEqual(set(result[0]),{'url','title','observedAt'})
+            self.assertEqual(set(result[0]),{'url','title','observedAt','activityAt'})
             self.assertEqual(result[0]['title'],'題 名')
             self.assertNotIn('DO NOT TRANSMIT',json.dumps(result))
             requests=[]
@@ -47,5 +47,6 @@ class MetadataSync(unittest.TestCase):
                 self.assertEqual(sync.synchronize(config),1)
             self.assertEqual(len(requests),2)
             self.assertGreater(requests[0]['observedAt'], result[0]['observedAt'])
+            self.assertEqual(requests[0]['activityAt'],result[0]['observedAt'])
 
 if __name__=='__main__': unittest.main()
