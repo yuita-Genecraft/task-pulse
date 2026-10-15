@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '..', 'chatgpt.js'), 'utf8');
 const defs = [
+  'const KIND = \"chatgpt\";',
   source.match(/^  const uuid = .*;$/m)?.[0],
   source.match(/^  const pathRe = .*;$/m)?.[0],
   source.match(/  const cleanTitle = \(s\) => \{[\s\S]*?\n  \};/)?.[0],
@@ -34,3 +35,7 @@ assert.equal(cleanTitle('隠し\u202e表示'), '隠し 表示');
 assert.equal(cleanTitle('ChatGPT'), '');
 assert.equal([...cleanTitle('あ'.repeat(200))].length, 120);
 console.log('PASS 15 normalizer assertions');
+const codex = new Function(defs.join('\n').replace('const KIND = "chatgpt";', 'const KIND = "codex";') + '\nreturn canonical')();
+assert.deepEqual(codex('codex://threads/' + id), {id,url:'codex://threads/'+id});
+for (const s of [root,'codex://threads/'+id+'?x=1','codex://review/'+id,'codex://threads/not-an-id','javascript:alert(1)']) assert.equal(codex(s),null,s);
+console.log('PASS Codex link boundaries');

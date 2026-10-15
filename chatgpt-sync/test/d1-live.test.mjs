@@ -128,3 +128,31 @@ test("Wrangler local D1: schema + auth + CAS + close/reopen + import", {timeout:
   const closeWon = afterRace.memo === "local memo" && !!afterRace.closedAt;
   assert.ok(memoWon || closeWon,"the single successful patch persists atomically");
 });
+
+test('Codex uses separate rows, strict deep links and the same edit protections', async () => {
+  const CDEX = 'codex://threads/' + ID;
+  const payload = {url:CDEX,title:'Codex native',observedAt:observedAt()};
+  let x = await send('/codex/capture',{method:'POST',token:C,body:payload});
+  assert.equal(x.response.status,200,JSON.stringify(x.json));
+  x = await send('/codex/chats',{token:R});
+  assert.equal(x.json.total,1);
+  assert.equal(x.json.chats[0].url,CDEX);
+  x = await send('/chats',{token:R});
+  assert.equal(x.json.total,2,'same UUID from ChatGPT remains separate');
+  for (const url of [URL,'codex://threads/'+ID+'?key=bad','codex://review/'+ID,'javascript:alert(1)']) {
+    x = await send('/codex/capture',{method:'POST',token:C,body:{...payload,url}});
+    assert.equal(x.response.status,400,url);
+  }
+  x = await send('/codex/chats/'+ID,{method:'PATCH',token:C,body:{action:'close',baseRevision:0}});
+  assert.equal(x.response.status,404,'capture token cannot edit native records');
+  x = await send('/codex/chats/'+ID,{method:'PATCH',token:W,body:{action:'close',baseRevision:0}});
+  assert.equal(x.response.status,200);
+  x = await send('/codex/capture',{method:'POST',token:C,body:{...payload,observedAt:observedAt()}});
+  assert.equal(x.response.status,200);
+  x = await send('/codex/chats',{token:R});
+  assert.ok(x.json.chats[0].closedAt,'background sync cannot undo explicit close');
+  x = await send('/codex/chats/'+ID,{method:'PATCH',token:W,body:{action:'reopen',baseRevision:1}});
+  assert.equal(x.response.status,200);
+  x = await send('/codex/chats',{token:R});
+  assert.equal(x.json.chats[0].closedAt,null);
+});

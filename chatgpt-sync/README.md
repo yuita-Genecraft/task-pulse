@@ -1,8 +1,8 @@
-# ChatGPT cross-device registry (Draft; NOT DEPLOYED)
+# ChatGPT / Codex registry (Worker deployed; desktop acceptance in progress)
 
 This is a separate Cloudflare Worker and D1 table. It does not write to the handoff-mcp database or reuse its GRAPH_READ_TOKEN, CHATS_WRITE_TOKEN or MCP credential.
 
-**Designated URL** (only after an approved deployment): `https://taskpulse-chatgpt.gooooerer.workers.dev`. This is a proposed worker name, not an observed live deployment.
+**Live URL**: `https://taskpulse-chatgpt.gooooerer.workers.dev`. Deployed on 2026-10-15 after explicit user approval and independent source review. Active Worker version at deployment: `45fa7d3e-1544-4930-9030-94f57ebf9b39`; dedicated D1: `744b431c-4b95-4f8e-bf9d-4cec0077cb0b` (APAC).
 
 Stored: ChatGPT canonical conversation URL, title, last observation time, a user memo (up to 500 code points), user-closed time, monotonically increasing edit revision. No message body, session cookie, ChatGPT API key, share link, or user account identity is collected.
 
@@ -36,3 +36,43 @@ CORS: only `https://yuita-genecraft.github.io` for UI; for capture, scoped Chrom
 6. Only after real E2E and required review, accept as ready. **Do not merge/deploy based on this Draft alone.**
 
 No tokens are shipped in this repository. GitHub merge, a successful unit test, Worker deploy and user acceptance are different statuses.
+
+## Codex addition (2026-10-15)
+
+The same dedicated Worker now has `/codex/capture`, `/codex/chats` and
+`/codex/chats/:id`, backed by a separate `codex_chat` table from migration 0002.
+The existing ChatGPT routes and rows are preserved. Strict Codex links accept
+only `codex://threads/<uuid>`; queries, fragments, review links and other schemes
+are rejected. Same UUIDs in ChatGPT and Codex remain separate records.
+
+The UI adds a Codex tab with the same read/write permissions and CAS editing.
+The native collector and installation details are in `../codex-sync/README.md`.
+The public extension package has an empty `capture-config.json`; an operator can
+prepare a private package with only CAPTURE_TOKEN preconfigured, so no key needs
+to be copied through chat or pasted into a page.
+
+Wrangler is now pinned to 4.151.0 with a lockfile. The prior host runtime could
+not run the configured October compatibility date; the pinned runtime runs the
+actual local D1 HTTP tests. This is still not a production acceptance result.
+
+## Deployment evidence (2026-10-15)
+
+The user approved independent review, dedicated Worker/D1 deployment and native
+installation. Independent review found a late-name/rename timestamp issue; it
+was fixed and the collector-to-Worker-to-local-D1 regression was added before
+deployment. A follow-up review found no remaining source blocker.
+
+Both remote migrations are applied. The native launchd collector uploaded 13
+actual unarchived main chats, including the active task, and the authenticated
+registry read returned the same current display name. A named API client
+(`TaskPulseCodex/0.3`) is required because the default Python urllib identity
+was rejected by Cloudflare. READ succeeds on both lists; WRITE cannot read, READ
+cannot capture, CAPTURE cannot edit, and an unrelated Origin is rejected.
+
+Worker config enables observability and sampled traces with query-string
+redaction. Credentials remain in protected local files and Worker secrets,
+not this repository. The public extension config remains empty.
+
+These measurements do not by themselves prove real Chrome extension capture,
+GitHub Pages deployment, or iPhone acceptance. Complete and report each real
+client's readback separately.
