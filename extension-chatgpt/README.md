@@ -1,12 +1,13 @@
-# Task Pulse ChatGPTタブ — 同期モード（Draft / 未デプロイ）
+# Task Pulse ChatGPTタブ — 同期モード
 
 ## 状態
-既存PR #7のPCローカル機能を維持しつつ、ChatGPT専用Worker + D1への同期を追加するDraftです。
-**GitHubにコードがあるだけでは使用できません。** Cloudflare D1/Workerの作成、3鍵の安全な設定、deployと実機受け入れが別途必要です。既存Claude用handoffの鍵やDBを共有しません。
+ChatGPT専用WorkerとD1は、2026-10-15のユーザー承認後に配備しました。
+Codexのネイティブ登録も同じ専用Workerの別テーブルを使います。
+既存Claude用handoffの鍵やDBは共有しません。実際の拡張導入・自動登録は別に確認します。
 
 ## PC：会話の自動登録
 - Chrome拡張の `extension-chatgpt` フォルダを開発者モードで読み込みます。
-- 拡張の「オプション」画面で、運用者が設定済みの **CAPTURE_TOKEN（登録専用）**を設定します。
+- 運用者の非公開パッケージに登録専用設定が入っている場合、鍵の貼り付けは不要です。公開ソースの設定は空なので、その場合だけ「オプション」でCAPTURE_TOKENを設定します。
 - ChatGPTで通常チャットを開くと、拡張バックグラウンドがURL・タイトル・ブラウザ観測時刻だけ送ります。会話本文・Cookie・ChatGPTのAPIキーは読みません。
 - 通信不可・鍵未設定なら未送信キューに残し、5分ごとに再試行します。失敗後に勝手に消しません。
 - 登録専用の鍵では一覧の閲覧・メモ更新・一覧から外す/戻すができません。
@@ -21,8 +22,8 @@
 
 ## 未完成・制限
 - iPhone版ChatGPTアプリで開いたチャットをOS越しに自動検出することは**今回の範囲外**。iPhoneからの閲覧/メモ/手動登録はサーバー反映後の対象です。
-- 実機Chrome拡張、iPhoneブラウザ、Cloudflare remote D1、CORS/認証エラー、オフライン再送の本番E2Eは未実施。
-- 非本番Nodeテストは`node --test chatgpt-sync/test/worker.test.mjs`。実SQLite/D1でのSQL回帰は未確認。
+- 本番Worker/D1の配備・認証境界・Codexの13実チャット登録は確認済みです。実Chrome拡張・iPhone・オフライン再送などは、それぞれ実機で確認する必要があります。
+- Node試験、実WranglerローカルD1のHTTP/CAS試験、Codex collectorからDBまでの題名変更試験は通過しています。
 - ChatGPTの生成中/出力完了ランプは未実装。
 - 公開ページに秘密鍵を埋めないでください。URLフラグメント内の鍵はブラウザ履歴・同期・同一originのコードから読めるbearer credentialです。
 

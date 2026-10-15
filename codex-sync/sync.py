@@ -83,7 +83,8 @@ def synchronize(config_path):
                           .isoformat(timespec='milliseconds').replace('+00:00', 'Z'))
             request = urllib.request.Request(API + '/codex/capture',
                 data=json.dumps(upload, ensure_ascii=False).encode(),
-                headers={'Content-Type':'application/json', 'Authorization':'Bearer ' + token}, method='POST')
+                headers={'Content-Type':'application/json', 'Authorization':'Bearer ' + token,
+                         'User-Agent':'TaskPulseCodex/0.3', 'Accept':'application/json'}, method='POST')
             # No raw network errors are logged: they can contain credentials or metadata.
             with urllib.request.urlopen(request, timeout=10) as response:
                 result = json.load(response)

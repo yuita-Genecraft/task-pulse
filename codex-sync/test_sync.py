@@ -35,6 +35,7 @@ class MetadataSync(unittest.TestCase):
             def send(request,timeout):
                 requests.append(json.loads(request.data))
                 self.assertEqual(request.full_url,sync.API+'/codex/capture')
+                self.assertEqual(request.get_header('User-agent'),'TaskPulseCodex/0.3')
                 return Response()
             with patch.object(sync.urllib.request,'urlopen',side_effect=OSError('offline')):
                 with self.assertRaises(OSError): sync.synchronize(config)
