@@ -11,13 +11,45 @@ sync=importlib.util.module_from_spec(spec);spec.loader.exec_module(sync)
 ID='01234567-89ab-4cde-8fab-0123456789ab'
 
 class MetadataSync(unittest.TestCase):
+    def test_exact_project_mirror_fallback_and_departures(self):
+        with tempfile.TemporaryDirectory() as folder:
+            database=Path(folder)/'state.sqlite';c=sqlite3.connect(database)
+            c.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,thread_source,source,project_id,cwd)')
+            cases=[
+                (None,sync.PROJECT_MIRROR,'user',0),
+                (None,None,'user',0),
+                (None,str(Path(sync.PROJECT_MIRROR).parent),'user',0),
+                (None,sync.PROJECT_MIRROR+'-other','user',0),
+                (None,sync.PROJECT_MIRROR+'/nested','user',0),
+                (None,str(Path(sync.PROJECT_MIRROR).parent/'other-project'),'user',0),
+                ('other-project',sync.PROJECT_MIRROR,'user',0),
+                (None,sync.PROJECT_MIRROR,'subagent',0),
+                (None,sync.PROJECT_MIRROR,'user',1),
+                (sync.PROJECT_ID,None,'user',0)]
+            ids=[]
+            for i,(project,cwd,source,archived) in enumerate(cases):
+                ident='%08x-89ab-4cde-8fab-0123456789ab'%i;ids.append(ident)
+                c.execute('INSERT INTO threads VALUES (?,?,?,NULL,?,NULL,?,?,?,?,?)',
+                    (ident,'safe title',1792000000,1792000010,archived,source,'vscode',project,cwd))
+            c.commit()
+            rows=list(sync.records(database,include_departures=True))
+            captures=[r for r in rows if r.get('action')!='leaveProject']
+            self.assertEqual({r['url'] for r in captures},{'codex://threads/'+ids[i] for i in (0,9)})
+            self.assertNotIn(sync.PROJECT_MIRROR,json.dumps(rows))
+            self.assertNotIn('codex://threads/'+ids[0],{r['url'] for r in rows if r.get('action')=='leaveProject'})
+            c.execute('UPDATE threads SET cwd=NULL WHERE id=?',(ids[0],));c.commit()
+            self.assertIn({'url':'codex://threads/'+ids[0],'action':'leaveProject'},list(sync.records(database,True)))
+            c.execute('UPDATE threads SET cwd=? WHERE id=?',(sync.PROJECT_MIRROR,ids[0]));c.commit()
+            self.assertIn('codex://threads/'+ids[0],{r['url'] for r in sync.records(database)})
+            c.close()
+
     def test_filters_metadata_and_retries_without_duplicate_uploads(self):
         with tempfile.TemporaryDirectory() as folder:
             p=Path(folder);db=p/'state.sqlite'
             c=sqlite3.connect(db)
-            c.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,has_user_event,thread_source,source,first_user_message,project_id)')
+            c.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,has_user_event,thread_source,source,first_user_message,project_id,cwd)')
             def insert(id,source,archived=0,project=sync.PROJECT_ID):
-                c.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',(id,'題\n名',1792000000,None,1792000010,None,archived,0,source,'vscode','DO NOT TRANSMIT',project))
+                c.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)',(id,'題\n名',1792000000,None,1792000010,None,archived,0,source,'vscode','DO NOT TRANSMIT',project))
             insert(ID,'user');insert('11234567-89ab-4cde-8fab-0123456789ab','subagent');insert('21234567-89ab-4cde-8fab-0123456789ab','user',1)
             insert('31234567-89ab-4cde-8fab-0123456789ab','user',project=None)
             insert('41234567-89ab-4cde-8fab-0123456789ab','user',project='other-project')
@@ -65,11 +97,11 @@ class MetadataSync(unittest.TestCase):
     def test_explicit_selection_is_narrow_and_removal_withdraws_the_record(self):
         with tempfile.TemporaryDirectory() as folder:
             p=Path(folder);database=p/'state.sqlite';c=sqlite3.connect(database)
-            c.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,thread_source,source,project_id)')
+            c.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,thread_source,source,project_id,cwd)')
             outside='11234567-89ab-4cde-8fab-0123456789ab'
             agent='21234567-89ab-4cde-8fab-0123456789ab'
             for ident,kind in [(ID,'user'),(outside,'user'),(agent,'subagent')]:
-                c.execute('INSERT INTO threads VALUES (?,?,?,NULL,?,NULL,0,?,?,NULL)',(ident,'safe title',1792000000,1792000010,kind,'vscode'))
+                c.execute('INSERT INTO threads VALUES (?,?,?,NULL,?,NULL,0,?,?,NULL,NULL)',(ident,'safe title',1792000000,1792000010,kind,'vscode'))
             c.commit();c.close()
             self.assertEqual(list(sync.records(database)),[])
             selected=sync.validate_selection([ID,agent,ID])

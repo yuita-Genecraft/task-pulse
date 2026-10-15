@@ -199,7 +199,7 @@ for (const KIND of ['chatgpt', 'codex']) (() => {
   function modeText() {
     const k = syncKeys();
     hint.textContent = k.cloud
-      ? (KIND === "codex" ? "共同PJ対象として指定したCodexチャットを登録します。PJ所属を確認できるもの、または個別に指定したものだけが対象です。本文は取得しません。「開く」はCodexをインストールしたMacで使えます。" : "「Claudeセカンドオピニオン」PJ内のみ。PC・iPhone共通の一覧です。ChatGPTの会話本文は取得しません。")
+      ? (KIND === "codex" ? "共同PJで起動したCodexチャットを自動登録します。PJの所属ID、またはアプリ専用のPJ作業場所で判定します。個別に指定したチャットも対象です。本文は取得しません。「開く」はCodexをインストールしたMacで使えます。" : "「Claudeセカンドオピニオン」PJ内のみ。PC・iPhone共通の一覧です。ChatGPTの会話本文は取得しません。")
       : "ローカルモード：このブラウザ内の記録です。同期にはWorkerとブックマークのgptread/gptwriteが必要です。";
     form.hidden = KIND === "codex" || (k.cloud && k.write.length < 32);
     importBtn.hidden = KIND === "codex" || !k.cloud || k.write.length < 32;

@@ -23,8 +23,8 @@ with tempfile.TemporaryDirectory() as folder:
     root = Path(folder)
     database = root / 'state.sqlite'
     db = sqlite3.connect(database)
-    db.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,thread_source,source,project_id)')
-    db.execute('INSERT INTO threads VALUES (?,?,?,NULL,?,NULL,0,?,?,?)',
+    db.execute('CREATE TABLE threads(id,name,created_at,created_at_ms,recency_at,recency_at_ms,archived,thread_source,source,project_id,cwd)')
+    db.execute('INSERT INTO threads VALUES (?,?,?,NULL,?,NULL,0,?,?,?,NULL)',
                (ID, None, 1792000000, 1792000000, 'user', 'vscode',sync.PROJECT_ID))
     db.commit()
     config = root / 'config.json'
@@ -69,6 +69,17 @@ with tempfile.TemporaryDirectory() as folder:
     except StopIteration:
         pass
     assert sync.synchronize(config)==0
+    db.execute('UPDATE threads SET cwd=? WHERE id=?',(sync.PROJECT_MIRROR,ID));db.commit()
+    assert sync.synchronize(config)==1
+    assert stored()['projectId']==sync.PROJECT_ID, 'exact app project mirror auto-registers without selection'
+    assert sync.synchronize(config)==0
+    db.execute('UPDATE threads SET cwd=? WHERE id=?',(sync.PROJECT_MIRROR+'-other',ID));db.commit()
+    assert sync.synchronize(config)==1
+    try:
+        stored();raise AssertionError('lookalike mirror remains visible')
+    except StopIteration:
+        pass
+    assert sync.synchronize(config)==0
     value=json.loads(config.read_text());value['includedThreadIds']=[ID];config.write_text(json.dumps(value))
     assert sync.synchronize(config)==1
     assert stored()['projectId']==sync.PROJECT_ID, 'explicitly selected unassigned chat enters Task Pulse shared group'
@@ -81,4 +92,4 @@ with tempfile.TemporaryDirectory() as folder:
         pass
     assert sync.synchronize(config)==0
     db.close()
-print('PASS collector -> Worker -> real local D1: late name, rename, deduplication, instruction resume, project departure, explicit selection/removal')
+print('PASS collector -> Worker -> real local D1: late name, rename, deduplication, instruction resume, project departure, automatic project mirror/departure, explicit selection/removal')
