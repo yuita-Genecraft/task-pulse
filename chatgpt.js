@@ -166,7 +166,7 @@ for (const KIND of ['chatgpt', 'codex']) (() => {
   .cg-inner{max-width:820px;margin:0 auto}.cg-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:12px;padding:10px 0}
   .cg-top strong{color:var(--text)}.cg-top button{margin-left:auto}.cg-hint{font-size:11.5px;color:var(--muted);line-height:1.6;margin:0 0 10px}
   .cg-form{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}.cg-form input{font:inherit;color:var(--text);background:var(--surface-2);border:1px solid var(--line);border-radius:7px;padding:9px;min-width:0;flex:1 1 165px}
-  .cg-form input[type=url]{flex:3 1 260px}.cg-btn{font:inherit;font-size:12px;border:1px solid var(--line);color:var(--text);background:var(--surface-2);padding:7px 10px;border-radius:7px;cursor:pointer}
+  .cg-form[hidden]{display:none}.cg-form input[type=url]{flex:3 1 260px}.cg-btn{font:inherit;font-size:12px;border:1px solid var(--line);color:var(--text);background:var(--surface-2);padding:7px 10px;border-radius:7px;cursor:pointer}
   .cg-btn:focus-visible,.cg-form input:focus-visible,.cg-edit:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
   .cg-row{background:var(--surface);border:1px solid var(--line-soft);border-radius:11px;padding:11px 13px;margin:7px 0;display:flex;gap:10px;align-items:center}
   .cg-body{min-width:0;flex:1 1 auto}.cg-title{font-weight:650;word-break:break-word;font-size:14px}.cg-meta{margin-top:4px;font-size:11.5px;color:var(--muted)}
@@ -204,7 +204,7 @@ for (const KIND of ['chatgpt', 'codex']) (() => {
     form.hidden = KIND === "codex" || (k.cloud && k.write.length < 32);
     importBtn.hidden = KIND === "codex" || !k.cloud || k.write.length < 32;
   }
-  const form = el("form", "cg-form");
+  const form = el("form", "cg-form"); form.hidden = KIND === "codex";
   const url = el("input"); url.type = "text"; url.required = true; url.placeholder = KIND === "codex" ? "codex://threads/…" : "共同PJ内のチャットURL"; url.setAttribute("aria-label", "チャットURL");
   const title = el("input"); title.type = "text"; title.placeholder = "題（任意）"; title.setAttribute("aria-label", "チャットの題"); title.maxLength = 120;
   const addBtn = el("button", "cg-btn", "登録"); addBtn.type = "submit";
