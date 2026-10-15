@@ -16,7 +16,7 @@
     } catch (_) { result.textContent = "保存に失敗しました。"; }
   };
   document.getElementById("clear").onclick = async () => {
-    await chrome.storage.local.remove("captureToken");
+    await chrome.storage.local.set({ captureToken: "" });
     token.value = "";
     result.textContent = "鍵を消しました。未送信のローカル記録は保持します。";
   };

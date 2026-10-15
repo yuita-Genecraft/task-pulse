@@ -1,4 +1,4 @@
-# ChatGPT cross-device registry (Draft; NOT DEPLOYED)
+# ChatGPT / Codex registry (Draft; NOT DEPLOYED)
 
 This is a separate Cloudflare Worker and D1 table. It does not write to the handoff-mcp database or reuse its GRAPH_READ_TOKEN, CHATS_WRITE_TOKEN or MCP credential.
 
@@ -36,3 +36,21 @@ CORS: only `https://yuita-genecraft.github.io` for UI; for capture, scoped Chrom
 6. Only after real E2E and required review, accept as ready. **Do not merge/deploy based on this Draft alone.**
 
 No tokens are shipped in this repository. GitHub merge, a successful unit test, Worker deploy and user acceptance are different statuses.
+
+## Codex addition (2026-10-15)
+
+The same dedicated Worker now has `/codex/capture`, `/codex/chats` and
+`/codex/chats/:id`, backed by a separate `codex_chat` table from migration 0002.
+The existing ChatGPT routes and rows are preserved. Strict Codex links accept
+only `codex://threads/<uuid>`; queries, fragments, review links and other schemes
+are rejected. Same UUIDs in ChatGPT and Codex remain separate records.
+
+The UI adds a Codex tab with the same read/write permissions and CAS editing.
+The native collector and installation details are in `../codex-sync/README.md`.
+The public extension package has an empty `capture-config.json`; an operator can
+prepare a private package with only CAPTURE_TOKEN preconfigured, so no key needs
+to be copied through chat or pasted into a page.
+
+Wrangler is now pinned to 4.151.0 with a lockfile. The prior host runtime could
+not run the configured October compatibility date; the pinned runtime runs the
+actual local D1 HTTP tests. This is still not a production acceptance result.

@@ -1,12 +1,13 @@
 // Task Pulse — ChatGPT。Claude の chats.js / handoff データを変更しない独立タブ。
 // ローカル IndexedDB に URL・題・確認時刻・メモ・明示的な「外す」を保存。
 // Chrome 拡張による自動登録は URL/題/確認時刻だけ。メッセージ本文や資格は扱わない。
-(() => {
+for (const KIND of ['chatgpt', 'codex']) (() => {
   "use strict";
   const tabs = document.getElementById("tabs");
   const stream = document.getElementById("stream");
   if (!tabs || !stream) return;
-  const VIEW = "chatgpt";
+  const VIEW = KIND;
+  const LABEL = KIND === "codex" ? "Codex" : "ChatGPT";
   // Opt-in: independent, per-capability tokens in the bookmark fragment.
   const API = "https://taskpulse-chatgpt.gooooerer.workers.dev";
   function syncKeys() {
@@ -20,14 +21,14 @@
     if (!token || token.length < 32) throw new Error("missing_token");
     let response;
     try {
-      response = await fetch(API + path, { method, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
+      response = await fetch(API + (KIND === "codex" ? "/codex" : "") + path, { method, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
         headers: { "Authorization": "Bearer " + token, ...(payload ? { "Content-Type": "application/json" } : {}) },
         ...(payload ? { body: JSON.stringify(payload) } : {}) });
     } catch (_) { throw new Error("network"); }
     if (!response.ok) throw new Error(response.status === 409 ? "conflict" : "http_" + response.status);
     return response.json();
   }
-  const DB = "taskpulse-chatgpt-local-v1";
+  const DB = "taskpulse-" + KIND + "-local-v1";
   const STORE = "chats";
   const MAX_MEMO = 500;
   const uuid = "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}";
@@ -58,6 +59,11 @@
     return Array.from(flat).slice(0, 120).join("");
   };
   function canonical(raw) {
+    if (KIND === "codex") {
+      if (typeof raw !== "string") return null;
+      const m = new RegExp("^codex://threads/(" + uuid + ")$", "i").exec(raw);
+      return m ? { id: m[1].toLowerCase(), url: "codex://threads/" + m[1].toLowerCase() } : null;
+    }
     if (typeof raw !== "string" || raw.length > 1024) return null;
     try {
       const u = new URL(raw);
@@ -174,12 +180,12 @@
 
   const claude = tabs.querySelector('[data-view="chats"]');
   if (claude) claude.textContent = "Claude";
-  const tab = el("button", "tab", "ChatGPT");
+  const tab = el("button", "tab", LABEL);
   tab.type = "button";
   tab.dataset.view = VIEW;
   tabs.appendChild(tab);
   const panel = el("div", "cg-panel");
-  panel.id = "chatgptPanel";
+  panel.id = KIND + "Panel";
   panel.hidden = true;
   stream.insertAdjacentElement("afterend", panel);
   const inner = el("div", "cg-inner");
@@ -192,13 +198,13 @@
   function modeText() {
     const k = syncKeys();
     hint.textContent = k.cloud
-      ? "同期モード：PC・iPhone共通の台帳。拡張機能の自動登録は専用登録鍵が必要です。ChatGPTの会話本文は取得しません。"
+      ? (KIND === "codex" ? "このMacのCodexチャットを自動登録します。本文は取得しません。「開く」はCodexをインストールしたMacで使えます。" : "同期モード：PC・iPhone共通の台帳。拡張機能の自動登録は専用登録鍵が必要です。ChatGPTの会話本文は取得しません。")
       : "ローカルモード：このブラウザ内の記録です。同期にはWorkerとブックマークのgptread/gptwriteが必要です。";
     form.hidden = k.cloud && k.write.length < 32;
     importBtn.hidden = !k.cloud || k.write.length < 32;
   }
   const form = el("form", "cg-form");
-  const url = el("input"); url.type = "url"; url.required = true; url.placeholder = "ChatGPT のチャットURL（/c/…）"; url.setAttribute("aria-label", "チャットURL");
+  const url = el("input"); url.type = "text"; url.required = true; url.placeholder = KIND === "codex" ? "codex://threads/…" : "ChatGPT のチャットURL（/c/…）"; url.setAttribute("aria-label", "チャットURL");
   const title = el("input"); title.type = "text"; title.placeholder = "題（任意）"; title.setAttribute("aria-label", "チャットの題"); title.maxLength = 120;
   const addBtn = el("button", "cg-btn", "登録"); addBtn.type = "submit";
   form.append(url, title, addBtn);
@@ -220,7 +226,7 @@
       modeText();
       count.textContent = `開いているチャット ${open.length} 件`;
       list.textContent = "";
-      if (!open.length) list.append(el("div", "cg-empty", "登録されたチャットはありません。拡張機能でChatGPTを開くか、上でURLを登録してください。"));
+      if (!open.length) list.append(el("div", "cg-empty", (KIND === "codex" ? "登録されたチャットはありません。Macの自動登録サービスを確認してください。" : "登録されたチャットはありません。拡張機能でChatGPTを開くか、上でURLを登録してください。")));
       for (const c of open) list.append(chatRow(c));
       if (closed.length) {
         const details = el("details", "cg-closed");
@@ -234,7 +240,7 @@
     const row = el("div", "cg-row");
     const body = el("div", "cg-body");
     body.append(el("div", "cg-title", c.title || "（題なし）"));
-    body.append(el("div", "cg-meta", `ブラウザで確認 ${fmt(c.observedAt)}${c.url.includes("/g/g-") ? " ・プロジェクト内" : ""}`));
+    body.append(el("div", "cg-meta", `${KIND === "codex" ? "Macで更新" : "ブラウザで確認"} ${fmt(c.observedAt)}${c.url.includes("/g/g-") ? " ・プロジェクト内" : ""}`));
     if (c.memo) body.append(el("div", "cg-memo", c.memo));
     const actions = el("div", "cg-acts");
     const viewOnly = syncKeys().cloud && syncKeys().write.length < 32;
@@ -276,7 +282,7 @@
           row: current ? { ...current, closedAt: c.closedAt ? null : (current.closedAt || new Date().toISOString()) } : null,
           result: true,
         }));
-        say(c.closedAt ? "一覧へ戻しました。" : "一覧から外しました。ChatGPT側の会話は削除していません。");
+        say(c.closedAt ? "一覧へ戻しました。" : "一覧から外しました。" + LABEL + "側の会話は削除していません。");
         await render();
       } catch (e) { say(e.message === "conflict" ? "他の端末で状態が変わりました。更新してから操作してください。" : "変更できませんでした（通信・鍵を確認）。", true); }
     };
@@ -287,11 +293,12 @@
     return row;
   }
   function requestExtension() {
+    if (KIND !== "chatgpt") return;
     window.postMessage({ source: pageSource, type: "request" }, location.origin);
   }
   form.onsubmit = async e => {
     e.preventDefault();
-    if (!canonical(url.value)) return say("ChatGPTの通常チャットURL（/c/…）を入れてください。共有リンクは自動登録の対象外です。", true);
+    if (!canonical(url.value)) return say(KIND === "codex" ? "CodexのチャットURL（codex://threads/…）を入れてください。" : "ChatGPTの通常チャットURL（/c/…）を入れてください。共有リンクは対象外です。", true);
     try {
       await add(url.value, title.value, new Date().toISOString());
       url.value = ""; title.value = ""; say(syncKeys().cloud ? "同期台帳に登録しました。" : "登録しました（このブラウザ内）。"); await render();
@@ -325,16 +332,20 @@
       panel.hidden = false; stream.style.display = "none";
       wrap && wrap.classList.add("v-chatgpt");
       tabs.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t === b));
-      setTimeout(() => { const n = document.getElementById("pname"); if (n && !panel.hidden) n.textContent = "ChatGPT"; }, 0);
+      setTimeout(() => { const n = document.getElementById("pname"); if (n && !panel.hidden) n.textContent = LABEL; }, 0);
       requestExtension(); void render();
     } else if (!panel.hidden) {
-      panel.hidden = true; wrap && wrap.classList.remove("v-chatgpt");
-      if (!document.querySelector(".ch-panel:not([hidden]), .tg-panel:not([hidden])")) stream.style.display = "";
+      panel.hidden = true; if (!["chatgpt", "codex"].includes(b.dataset.view)) wrap && wrap.classList.remove("v-chatgpt");
+      if (!document.querySelector(".ch-panel:not([hidden]), .tg-panel:not([hidden]), .cg-panel:not([hidden])")) stream.style.display = "";
     }
   });
   window.addEventListener("message", async e => {
+    if (KIND !== "chatgpt") return;
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.source !== extSource || e.data.type !== "snapshot") return;
-    if (syncKeys().cloud) return; // direct background upload owns cloud sync; never bulk-POST the 500-row local snapshot
+    if (syncKeys().cloud) {
+      say("自動登録拡張機能：接続済み");
+      return; // Background owns cloud sync; never bulk-POST the snapshot.
+    }
     const entries = Array.isArray(e.data.entries) ? e.data.entries.slice(0, 500) : [];
     if (Number.isInteger(e.data.total) && e.data.total > 500) say(`拡張機能に${e.data.total}件あります。最新500件だけ同期しました（過去の記録は削除していません）。`, true);
     try {
@@ -343,5 +354,6 @@
     } catch (_) { say("拡張機能からの登録を保存できませんでした。", true); }
   });
   window.addEventListener("hashchange", () => { if (!panel.hidden) void render(); });
+  setInterval(() => { if (!panel.hidden && document.visibilityState === "visible" && !panel.querySelector(".cg-edit")) void render(); }, 30000);
   requestExtension();
 })();

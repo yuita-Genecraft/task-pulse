@@ -6,6 +6,19 @@ const chatPath = new RegExp('^/(?:g/g-[A-Za-z0-9_-]{1,160}/)?c/(' + UUID + ')$',
 const pendingKey = id => 'tp_pending_' + id;
 const entryKey = id => 'tp_gpt_' + id;
 const protectedStorage = chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+// A private operator-built package may contain only its upload credential.
+// Public source ships an empty object; read/write credentials never go here.
+const credentialReady = (async () => {
+  await protectedStorage;
+  const saved = await chrome.storage.local.get('captureToken');
+  if (Object.hasOwn(saved, 'captureToken')) return;
+  try {
+    const response = await fetch(chrome.runtime.getURL('capture-config.json'));
+    const value = (await response.json()).captureToken;
+    if (typeof value === 'string' && value.length >= 32 && value.length <= 256)
+      await chrome.storage.local.set({captureToken:value});
+  } catch (_) { /* Public packages remain in local mode until configured. */ }
+})();
 const sanitizedTitle = s => String(s || '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g, ' ')
   .replace(/\s+/g, ' ').trim().slice(0, 120);
 function canonical(s) {
@@ -34,7 +47,7 @@ async function flush() {
   if (flushing) return;
   flushing = true;
   try {
-    await protectedStorage;
+    await credentialReady;
     const opt = await chrome.storage.local.get(['captureToken']);
     const token = opt.captureToken;
     if (typeof token !== 'string' || token.length < 32) return;

@@ -29,6 +29,11 @@ export function canonical(raw) {
     return { id, url: 'https://chatgpt.com' + u.pathname.slice(0, -m[1].length) + id };
   } catch { return null; }
 }
+export function canonicalCodex(raw) {
+  if (typeof raw !== 'string') return null;
+  const match = new RegExp('^codex://threads/(' + URL_ID + ')$', 'i').exec(raw);
+  return match ? { id: match[1].toLowerCase(), url: 'codex://threads/' + match[1].toLowerCase() } : null;
+}
 export function parseObservation(raw, now = Date.now()) {
   if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(raw) || !/(Z|[+-]\d{2}:\d{2})$/.test(raw)) return null;
   const t = Date.parse(raw);
@@ -72,9 +77,13 @@ function projectRow(r) {
   };
 }
 export async function handle(request, env) {
-  const path = new URL(request.url).pathname;
+  const originalPath = new URL(request.url).pathname;
+  const codex = originalPath.startsWith('/codex/');
+  const path = codex ? originalPath.slice(6) : originalPath;
+  const table = codex ? 'codex_chat' : 'gpt_chat';
+  const normalize = codex ? canonicalCodex : canonical;
   const method = request.method;
-  const origin = corsOrigin(request, path, method);
+  const origin = corsOrigin(request, originalPath, method);
   if (origin === null) return send({ error: 'not_found' }, 404);
   if (method === 'OPTIONS') {
     if ((origin !== SITE && !(path === '/capture' && /^chrome-extension:\/\/[a-p]{32}$/.test(origin))) || (!['/capture', '/import', '/chats'].includes(path) && !ID_PATTERN.test(path.replace(/^\/chats\//, '')))) return send({ error: 'not_found' }, 404);
@@ -97,15 +106,15 @@ export async function handle(request, env) {
   if (!auth) return send({ error: 'not_found' }, 404, origin);
   if (!env.DB || typeof env.DB.prepare !== 'function') return send({ error: 'unavailable' }, 503, origin);
   if (isGet) {
-    const totalRow = await env.DB.prepare('SELECT COUNT(*) AS n FROM gpt_chat').first();
-    const result = await env.DB.prepare('SELECT * FROM gpt_chat ORDER BY observed_at DESC, id ASC LIMIT ?').bind(MAX_ROWS).all();
+    const totalRow = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first();
+    const result = await env.DB.prepare(`SELECT * FROM ${table} ORDER BY observed_at DESC, id ASC LIMIT ?`).bind(MAX_ROWS).all();
     const chats = (result.results || []).map(projectRow);
     return send({ chats, total: totalRow.n, limited: totalRow.n > MAX_ROWS }, 200, origin);
   }
   const input = await body(request);
   if (!input) return send({ error: 'invalid_json' }, 400, origin);
   if (isImport) {
-    const c = canonical(input.url);
+    const c = normalize(input.url);
     const when = parseObservation(input.observedAt);
     const memo = memoValue(input.memo);
     const closeAt = input.closedAt === null ? null : parseObservation(input.closedAt);
@@ -113,23 +122,23 @@ export async function handle(request, env) {
       return send({ error: 'invalid_import' }, 400, origin);
     // Explicit user import is create-only. Existing records are never overwritten.
     const inserted = await env.DB.prepare(
-      "INSERT INTO gpt_chat(id,url,title,observed_at,memo,closed_at) VALUES (?,?,?,?,?,?) " +
+      `INSERT INTO ${table}(id,url,title,observed_at,memo,closed_at) VALUES (?,?,?,?,?,?) ` +
       "ON CONFLICT(id) DO NOTHING RETURNING id"
     ).bind(c.id, c.url, cleanText(input.title,120), when, memo, closeAt).first();
     return send({ ok: true, inserted: !!inserted }, 200, origin);
   }
   if (isCapture) {
-    const c = canonical(input.url);
+    const c = normalize(input.url);
     const when = parseObservation(input.observedAt);
     if (!c || !when || typeof input.title !== 'string' || input.title.length > 2000)
       return send({ error: 'invalid_capture' }, 400, origin);
     const title = cleanText(input.title, 120);
     await env.DB.prepare(
-      "INSERT INTO gpt_chat (id,url,title,observed_at) VALUES (?,?,?,?) " +
+      `INSERT INTO ${table} (id,url,title,observed_at) VALUES (?,?,?,?) ` +
       "ON CONFLICT(id) DO UPDATE SET " +
-      "url = CASE WHEN excluded.observed_at > gpt_chat.observed_at THEN excluded.url ELSE gpt_chat.url END, " +
-      "title = CASE WHEN excluded.title <> '' AND (excluded.observed_at > gpt_chat.observed_at OR gpt_chat.title = '') THEN excluded.title ELSE gpt_chat.title END, " +
-      "observed_at = MAX(gpt_chat.observed_at,excluded.observed_at)"
+      `url = CASE WHEN excluded.observed_at > ${table}.observed_at THEN excluded.url ELSE ${table}.url END, ` +
+      `title = CASE WHEN excluded.title <> '' AND (excluded.observed_at > ${table}.observed_at OR ${table}.title = '') THEN excluded.title ELSE ${table}.title END, ` +
+      `observed_at = MAX(${table}.observed_at,excluded.observed_at)`
     ).bind(c.id, c.url, title, when).run();
     return send({ ok: true }, 200, origin);
   }
@@ -139,18 +148,18 @@ export async function handle(request, env) {
   if (input.action === 'memo') {
     const memo = memoValue(input.memo);
     if (memo === null) return send({ error: 'invalid_memo' }, 400, origin);
-    sql = 'UPDATE gpt_chat SET memo=?,revision=revision+1 WHERE id=? AND revision=? RETURNING *';
+    sql = `UPDATE ${table} SET memo=?,revision=revision+1 WHERE id=? AND revision=? RETURNING *`;
     args = [memo, match[1], input.baseRevision];
   } else if (input.action === 'close') {
-    sql = 'UPDATE gpt_chat SET closed_at=?,revision=revision+1 WHERE id=? AND revision=? AND closed_at IS NULL RETURNING *';
+    sql = `UPDATE ${table} SET closed_at=?,revision=revision+1 WHERE id=? AND revision=? AND closed_at IS NULL RETURNING *`;
     args = [new Date().toISOString(), match[1], input.baseRevision];
   } else {
-    sql = 'UPDATE gpt_chat SET closed_at=NULL,revision=revision+1 WHERE id=? AND revision=? AND closed_at IS NOT NULL RETURNING *';
+    sql = `UPDATE ${table} SET closed_at=NULL,revision=revision+1 WHERE id=? AND revision=? AND closed_at IS NOT NULL RETURNING *`;
     args = [match[1], input.baseRevision];
   }
   const changed = await env.DB.prepare(sql).bind(...args).first();
   if (changed) return send({ ok: true, chat: projectRow(changed) }, 200, origin);
-  const current = await env.DB.prepare('SELECT * FROM gpt_chat WHERE id=?').bind(match[1]).first();
+  const current = await env.DB.prepare(`SELECT * FROM ${table} WHERE id=?`).bind(match[1]).first();
   return current ? send({ error: 'conflict', chat: projectRow(current) }, 409, origin) : send({ error: 'unknown_chat' }, 404, origin);
 }
 export default {
