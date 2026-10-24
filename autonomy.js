@@ -13,7 +13,7 @@
 // - データは textContent でだけ入れる（文字列の innerHTML は使わない）。リンクにするのは、決めた場所の https だけ。
 // - 待ちの色は handoff が返す種別（ゆいた／他レーン／外部／なし／unknown）だけで決める。本文から推測しない。
 // - レーンの名前は、このファイルに書かない（公開 repo のため）。
-// - 申送りは追記だけ（そのレーンの main task が1件増える）。送っている間はボタンを止め、届いたら欄を空にする（二度押しで2件にしない）。
+// - 申送りは追記だけ（そのレーンの main task が1件増える）。送っている間は、そのレーンの欄を止める（描き直しても止まったまま）。届いたら欄を空にする（二度押し・送信中の更新で2件にしない）。
 (() => {
   "use strict";
   const BASE = "https://handoff-mcp.gooooerer.workers.dev";
@@ -78,7 +78,7 @@
     if (!text) return { ok: false, error: "空です。" };
     const n = Array.from(text).length;
     if (n > NOTE_MAX) return { ok: false, error: NOTE_MAX + "字を超えています（" + n + "字）。" };
-    if (/[\u0000-\u001f\u007f-\u009f]/.test(text)) return { ok: false, error: "1行で書いてください（改行は入れられません）。" };
+    if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(text)) return { ok: false, error: "1行で書いてください（改行は入れられません）。" };
     return { ok: true, text };
   }
   /** Text cut into plain parts and links (links only for https on LINK_HOSTS, exact host). */
@@ -142,7 +142,7 @@
   .au-band.au-band-none{border-color:var(--line-soft);background:var(--surface)}
   .au-band h3{margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:.06em;color:#ffc9cd}
   .au-band.au-band-none h3{color:var(--muted);margin:0}
-  .au-bandrow{display:flex;gap:8px;align-items:baseline;font-size:13px;line-height:1.5;padding:3px 0;cursor:pointer}
+  .au-bandrow{display:flex;gap:8px;align-items:baseline;font-size:13px;line-height:1.5;padding:3px 0}
   .au-bandrow b{flex:none;font:600 12.5px/1.5 var(--mono);color:var(--text)}
   .au-bandrow span{min-width:0;word-break:break-word;color:#ffe3e5}
   .au-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin-top:12px}
@@ -150,7 +150,6 @@
   .au-card{min-width:0;background:var(--surface);border:1px solid var(--line-soft);border-left:4px solid var(--au-c);border-radius:11px;padding:11px 12px 12px;
     scroll-margin-top:10px}
   .au-card.au-stale{opacity:.6}
-  .au-card.au-flash{box-shadow:0 0 0 2px var(--au-c)}
   .au-ch{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .au-name{font:700 13.5px/1.3 var(--mono);color:var(--text);word-break:break-all}
   .au-chip{font-size:11px;font-weight:700;color:#0e1117;background:var(--au-c);border-radius:999px;padding:2px 8px;line-height:1.4}
@@ -192,6 +191,10 @@
   stream.insertAdjacentElement("afterend", panel);
 
   let seq = 0; // 古い取得の結果で新しい表示を上書きしない
+  // 送っている申送り（レーン → その送信）。描き直しても残る＝届くまで、同じレーンからはもう送らない（二重に載せない）
+  const sending = new Map();
+  // 今の画面にある、レーンごとの欄（描き直すと差し替わる）。送信が終わった時は、今の欄に結果を出す
+  const boxes = new Map();
   tabs.addEventListener("click", (e) => {
     const b = e.target.closest(".tab");
     if (!b) return;
@@ -210,8 +213,8 @@
     } else if (!panel.hidden) {
       panel.hidden = true;
       wrap && wrap.classList.remove("v-autonomy");
-      // 行き先が自分の枠を持つ画面（taskgraf・チャット）なら、その枠が出ている＝タスクの流れは戻さない
-      if (!document.querySelector(".tg-panel:not([hidden]),.ch-panel:not([hidden])")) stream.style.display = "";
+      // 行き先が自分の枠を持つ画面（taskgraf・チャット・ChatGPT／Codex）なら、その枠が出ている＝タスクの流れは戻さない
+      if (!document.querySelector(".tg-panel:not([hidden]),.ch-panel:not([hidden]),.cg-panel:not([hidden])")) stream.style.display = "";
     }
   });
   window.addEventListener("hashchange", () => {
@@ -262,6 +265,7 @@
 
   // ---- 描く ----
   function render(data, now) {
+    boxes.clear();
     const inner = el("div");
     const bar = el("div", "au-bar");
     const l1 = el("div", "au-l1");
@@ -276,29 +280,13 @@
     if (data.skipped > 0) bar.append(el("div", "au-note", "形の読めないレーンが " + data.skipped + " 本ありました（出していません）。"));
     inner.append(bar);
 
-    const cards = new Map();
     const waiting = data.lanes.filter((l) => waitKind(l) === "ゆいた");
     const band = el("section", "au-band" + (waiting.length ? "" : " au-band-none"));
     band.append(el("h3", null, waiting.length ? "ゆいた待ち " + waiting.length + " 本" : "ゆいた待ちはありません"));
     for (const l of waiting) {
+      // 文だけ（ボタン・リンク・操作は置かない）
       const r = el("div", "au-bandrow");
-      r.tabIndex = 0;
-      r.setAttribute("role", "button");
       r.append(el("b", null, l.id), el("span", null, l.position.wait.text ? l.position.wait.text.text : ""));
-      const go = () => {
-        const c = cards.get(l.id);
-        if (!c) return;
-        c.scrollIntoView({ behavior: "smooth", block: "start" });
-        c.classList.add("au-flash");
-        setTimeout(() => c.classList.remove("au-flash"), 1200);
-      };
-      r.addEventListener("click", go);
-      r.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          go();
-        }
-      });
       band.append(r);
     }
     inner.append(band);
@@ -306,9 +294,7 @@
     if (!data.lanes.length) inner.append(msg("有効なレーンがありません。"));
     const grid = el("div", "au-grid");
     for (const l of data.lanes) {
-      const c = card(l, now);
-      cards.set(l.id, c);
-      grid.append(c);
+      grid.append(card(l, now));
     }
     inner.append(grid);
     show(inner);
@@ -379,33 +365,47 @@
     send.type = "button";
     const cnt = el("div", "au-count", "0/" + NOTE_MAX);
     const say = el("div", "au-say");
-    let busy = false;
     const update = () => {
+      const busy = sending.has(laneId);
       const n = Array.from(input.value.trim()).length;
       cnt.textContent = n + "/" + NOTE_MAX;
       cnt.classList.toggle("au-over", n > NOTE_MAX);
+      input.disabled = busy;
       send.disabled = busy || n === 0 || n > NOTE_MAX;
     };
     input.addEventListener("input", update);
     const go = async () => {
-      if (busy) return;
+      if (sending.has(laneId)) return tell(say, "前の申送りを送っています。届いてから書いてください。", true);
       const v = checkNote(input.value);
       if (!v.ok) return tell(say, v.error, true);
-      busy = true;
-      input.disabled = true;
+      const entry = { text: v.text };
+      sending.set(laneId, entry); // 送る前に印を付ける（同じ瞬間の2回目も止める）
+      const p = postNote(laneId, v.text);
       update();
       tell(say, "送っています…");
-      const res = await postNote(laneId, v.text);
-      busy = false;
-      input.disabled = false;
-      if (res.status === 201) {
-        input.value = "";
-        tell(say, "送りました（" + laneId + " の main task として載りました）。");
-      } else {
-        tell(say, noteError(res.status, res.body), true);
+      let res;
+      try {
+        res = await p;
+      } finally {
+        sending.delete(laneId);
       }
-      update();
+      // 送っている間に描き直されていたら、結果は今の欄に出す
+      const now = boxes.get(laneId) || mine;
+      if (res.status === 201) {
+        if (now === mine || now.input.value.trim() === v.text) now.input.value = "";
+        tell(now.say, "送りました（" + laneId + " の main task として載りました）。");
+      } else {
+        if (now !== mine && !now.input.value) now.input.value = v.text;
+        tell(now.say, noteError(res.status, res.body), true);
+      }
+      now.update();
     };
+    const mine = { input, say, update };
+    boxes.set(laneId, mine);
+    if (sending.has(laneId)) {
+      input.value = sending.get(laneId).text;
+      tell(say, "送っています…");
+    }
     send.addEventListener("click", () => void go());
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.isComposing) {

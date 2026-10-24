@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Test-only dependencies for tests/*.cjs (not served, not loaded by the page).",
+  "devDependencies": {
+    "jsdom": "25.0.1"
+  }
+}

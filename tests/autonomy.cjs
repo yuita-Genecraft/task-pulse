@@ -82,6 +82,9 @@ test("checkNote: trimmed, 1..300 code points, one line (same rule as handoff)", 
   assert.equal(A.checkNote("あ".repeat(301)).ok, false);
   assert.equal(A.checkNote("一\n二").ok, false);
   assert.equal(A.checkNote("a\tb").ok, false);
+  // Unicode line / paragraph separators and NEL: handoff's isOneLine (\p{Cc}\p{Zl}\p{Zp}) refuses them too
+  for (const c of [" ", " ", "\u0085", "\r\n", "\u0000"]) assert.equal(A.checkNote("一" + c + "二").ok, false, JSON.stringify(c));
+  assert.equal(A.checkNote("全角　スペース").ok, true, "an ideographic space is not a line break");
   assert.equal(A.NOTE_MAX, 300);
 });
 
