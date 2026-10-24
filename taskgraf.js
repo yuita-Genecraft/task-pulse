@@ -410,7 +410,7 @@
     // 中心（待ち・依頼でつながるレーン）と、まとまり→レーン
     const core = layoutCore(lanes, rels);
     const rest = lanes.filter((l) => !core.boxes.has(l.id))
-      .sort((a, b) => (Date.parse(b.last_activity_at || 0) || 0) - (Date.parse(a.last_activity_at || 0) || 0) || a.id.localeCompare(b.id));
+      .sort((a, b) => (Date.parse(b.last_activity_at || 0) || 0) - (Date.parse(a.last_activity_at || 0) || 0)); // 同時刻は handoff の並びのまま（安定ソート）
     const groups = [];
     if (catOf) {
       catList.forEach((c, i) => { // 色は並びの順で振る（まとまりの名前の集合が変わらない限り、開くたびに同じ色と位置）
