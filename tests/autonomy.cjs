@@ -53,6 +53,7 @@ test("newestFirst: last_activity_at descending, no readable time at the bottom, 
   assert.deepEqual(order([at("r", "2026-10-25T00:00:00.000Z"), at("q", "2026-10-25T09:00:00+09:00"), at("p", "2026-10-25T00:00:00.000Z")]), ["r", "q", "p"]);
   // a very old real time is still above no time
   assert.deepEqual(order([at("none", null), at("epoch", "1970-01-01T00:00:00.000Z")]), ["epoch", "none"]);
+  assert.deepEqual(order([at("bad", "x"), at("pre", "1969-12-31T00:00:00.000Z")]), ["pre", "bad"], "a time before 1970 is above an unreadable one");
   // milliseconds count
   assert.deepEqual(order([at("a", "2026-10-25T00:00:00.001Z"), at("b", "2026-10-25T00:00:00.002Z")]), ["b", "a"]);
   // the input is not changed
