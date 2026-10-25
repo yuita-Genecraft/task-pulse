@@ -43,6 +43,22 @@
   const TIER_GAP = 88, CORE_GAP = 110; // 中心の段の間・横の間（太い矢印と「待ち」の札、拡大時の行が入る間）
   const LANE_H = 36; // レーンの縦の間（拡大して本丸の行が出ても重ならない高さ）
   const PANE_W = 320; // 詳細カードの幅
+  // 中心の外のレーンの並び：最後に動いた順（新しいものが上）。時刻が無い・読めないものは一番下。同時刻は /graph の並びのまま（安定）。
+  // autonomy.js の newestFirst と同じ規則（tests/taskgraf.cjs が直接呼ぶ）。
+  function newestFirst(lanes) {
+    const ms = (l) => {
+      const t = typeof l.last_activity_at === "string" ? Date.parse(l.last_activity_at) : NaN;
+      return Number.isFinite(t) ? t : null;
+    };
+    return lanes
+      .map((l, i) => ({ l, i, t: ms(l) }))
+      .sort((a, b) => (a.t === null) - (b.t === null) || b.t - a.t || a.i - b.i) // null は上の項で分けた後だけ 0 として引く
+      .map((x) => x.l);
+  }
+  if (typeof document === "undefined") {
+    if (typeof module === "object" && module.exports) module.exports = { newestFirst };
+    return;
+  }
 
   const tabs = document.getElementById("tabs");
   const stream = document.getElementById("stream");
@@ -409,8 +425,7 @@
 
     // 中心（待ち・依頼でつながるレーン）と、まとまり→レーン
     const core = layoutCore(lanes, rels);
-    const rest = lanes.filter((l) => !core.boxes.has(l.id))
-      .sort((a, b) => (Date.parse(b.last_activity_at || 0) || 0) - (Date.parse(a.last_activity_at || 0) || 0) || a.id.localeCompare(b.id));
+    const rest = newestFirst(lanes.filter((l) => !core.boxes.has(l.id)));
     const groups = [];
     if (catOf) {
       catList.forEach((c, i) => { // 色は並びの順で振る（まとまりの名前の集合が変わらない限り、開くたびに同じ色と位置）

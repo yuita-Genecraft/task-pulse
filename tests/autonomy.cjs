@@ -42,6 +42,34 @@ test("readPulse keeps the lanes whose shape fits and counts the rest", () => {
   assert.equal(A.readPulse({ lanes: "x" }), null);
 });
 
+test("newestFirst: last_activity_at descending, no readable time at the bottom, the same time keeps the order", () => {
+  const at = (id, t) => lane(id, pos("なし"), { last_activity_at: t });
+  const order = (ls) => A.newestFirst(ls).map((l) => l.id);
+  assert.deepEqual(order([at("a", "2026-10-24T01:00:00.000Z"), at("b", "2026-10-25T01:00:00.000Z"), at("c", "2026-10-23T01:00:00.000Z")]), ["b", "a", "c"]);
+  // missing / unreadable → bottom, in the order they came
+  assert.deepEqual(order([at("n1", null), at("x", "2026-10-01T00:00:00.000Z"), at("bad", "昨日"), at("n2", null), at("empty", "")]), ["x", "n1", "bad", "n2", "empty"]);
+  // the same time (and the same instant written two ways) → the order they came, both directions
+  assert.deepEqual(order([at("p", "2026-10-25T00:00:00.000Z"), at("q", "2026-10-25T09:00:00+09:00"), at("r", "2026-10-25T00:00:00.000Z")]), ["p", "q", "r"]);
+  assert.deepEqual(order([at("r", "2026-10-25T00:00:00.000Z"), at("q", "2026-10-25T09:00:00+09:00"), at("p", "2026-10-25T00:00:00.000Z")]), ["r", "q", "p"]);
+  // a very old real time is still above no time
+  assert.deepEqual(order([at("none", null), at("epoch", "1970-01-01T00:00:00.000Z")]), ["epoch", "none"]);
+  assert.deepEqual(order([at("bad", "x"), at("pre", "1969-12-31T00:00:00.000Z")]), ["pre", "bad"], "a time before 1970 is above an unreadable one");
+  // milliseconds count
+  assert.deepEqual(order([at("a", "2026-10-25T00:00:00.001Z"), at("b", "2026-10-25T00:00:00.002Z")]), ["b", "a"]);
+  // the input is not changed
+  const ls = [at("a", "2026-10-24T00:00:00.000Z"), at("b", "2026-10-25T00:00:00.000Z")];
+  A.newestFirst(ls);
+  assert.deepEqual(ls.map((l) => l.id), ["a", "b"]);
+  assert.equal(A.activityMs(at("a", "2026-10-25T00:00:00.000Z")), Date.UTC(2026, 9, 25));
+  assert.equal(A.activityMs(at("a", null)), null);
+  assert.equal(A.activityMs(at("a", "x")), null);
+});
+
+test("readPulse returns the lanes newest first (the band and the cards both use this order)", () => {
+  const r = A.readPulse({ lanes: [lane("a", pos("なし"), { last_activity_at: "2026-10-23T00:00:00.000Z" }), lane("b", pos("なし"), { last_activity_at: null }), lane("c", pos("なし"), { last_activity_at: "2026-10-25T00:00:00.000Z" })] });
+  assert.deepEqual(r.lanes.map((l) => l.id), ["c", "a", "b"]);
+});
+
 test("waitKind: the four kinds, unknown, and a kind the page does not know yet", () => {
   for (const k of ["ゆいた", "他レーン", "外部", "なし", "unknown"]) assert.equal(A.waitKind(lane("x", pos(k))), k);
   assert.equal(A.waitKind(lane("x", pos("承認"))), "unknown");

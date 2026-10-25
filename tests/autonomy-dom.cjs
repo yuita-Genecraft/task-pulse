@@ -3,6 +3,8 @@
 //   tabs   : every ordered pair of tabs (the existing ones and autonomy) → after each click exactly the panel of the
 //            clicked tab is shown (the task stream only for タスク / ポスト化スタンバイ) and only that tab is "on"
 //   band   : the ゆいた待ち band is text only — no tabindex, no role, nothing happens on a click or a key
+//   order  : the cards and the ゆいた待ち band are newest first (last_activity_at), no readable time at the bottom,
+//            the same time in handoff's order
 //   sending: a note being sent survives a re-render (the 更新 button, a # change): the redrawn field stays locked and
 //            a second send of the lane posts nothing; when the first POST resolves, the redrawn field shows it
 // Needs tests/node_modules (cd tests && npm ci). Usage: node --test tests/
@@ -22,12 +24,12 @@ test.afterEach(() => {
   while (opened.length) opened.pop().window.close();
 });
 
-function page({ hash = "#graph=read-key&note=note-key-0123456789-0123456789" } = {}) {
+function page({ hash = "#graph=read-key&note=note-key-0123456789-0123456789", lanes: given } = {}) {
   let html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
   html = html.replace(/<script src="([^"]+)" defer><\/script>/g, (_, f) => `<script>${fs.readFileSync(path.join(ROOT, f), "utf8").replace(/<\/script/g, "<\\/script")}</script>`);
   const calls = [];
   const held = [];
-  const lanes = [
+  const lanes = given || [
     { id: "lane-a", focus: "本丸A", last_activity_at: new Date().toISOString(), position: pos("ゆいた", "ゆいた｜確認してほしい") },
     { id: "lane-b", focus: null, last_activity_at: null, position: pos("なし", "なし") },
   ];
@@ -107,6 +109,27 @@ test("the ゆいた待ち band is text only: no tabindex, no role, a click or a 
   rows[0].dispatchEvent(new w.KeyboardEvent("keydown", { key: " ", bubbles: true }));
   await tick(w);
   assert.equal(w.__scrolled || 0, 0, "nothing scrolled");
+});
+
+test("the cards and the ゆいた待ち band are newest first; no readable time at the bottom; the same time keeps handoff's order", async () => {
+  const at = (iso, id, kind = "なし") => ({ id, focus: null, last_activity_at: iso, position: pos(kind, kind === "ゆいた" ? "ゆいた｜" + id : "なし") });
+  // handoff's order (project rowid), not the order of the times
+  const lanes = [
+    at("2026-10-20T00:00:00.000Z", "old", "ゆいた"),
+    at(null, "never"),
+    at("2026-10-25T00:30:00.000Z", "same-1", "ゆいた"),
+    at("not a time", "garbage"),
+    at("2026-10-25T09:10:00.000Z", "newest"),
+    at("2026-10-25T00:30:00.000Z", "same-2", "ゆいた"),
+    at("2026-10-24T12:00:00.000Z", "mid"),
+  ];
+  const { w, d } = page({ lanes });
+  d.querySelector('#tabs .tab[data-view="autonomy"]').click();
+  await tick(w, 6);
+  const cards = [...d.querySelectorAll(".au-grid .au-card .au-name")].map((n) => n.textContent);
+  assert.deepEqual(cards, ["newest", "same-1", "same-2", "mid", "old", "never", "garbage"]);
+  const band = [...d.querySelectorAll(".au-band .au-bandrow b")].map((n) => n.textContent);
+  assert.deepEqual(band, ["same-1", "same-2", "old"]);
 });
 
 for (const [how, redraw] of [

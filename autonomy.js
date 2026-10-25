@@ -1,5 +1,5 @@
 // autonomy — Task Pulse の「autonomy」タブ。handoff の GET /pulse を、タブを開いた時と「更新」を押した時に読み直し、
-// 有効なレーンを1枚ずつ並べて、それぞれの今（到達点・次の一手・待ち・根拠・最終更新）を出す。
+// 有効なレーンを、最後に動いた（last_activity_at の新しい）順に1枚ずつ並べて、それぞれの今（到達点・次の一手・待ち・根拠・最終更新）を出す。
 // 上に「ゆいた待ち」のレーンだけの帯（待ちの文を1行で出すだけ。ボタンは置かない）。各レーンに、ゆいたが1行書く「申送り」の欄（POST /pulse/note）。
 // 設計メモ_TaskPulse_autonomyタブと承認カード v0.1 §0.1・§5.2・§6。承認カードは作らない（2026-10-24 ゆいたの決定）。
 //
@@ -47,11 +47,24 @@
     return !!p.wait && typeof p.wait === "object" && isStr(p.wait.kind) && isCapped(p.wait.text);
   }
   const okLane = (l) => !!l && isStr(l.id) && isStrOrNull(l.focus) && isStrOrNull(l.last_activity_at) && okPosition(l.position);
-  /** The answer of GET /pulse: the lanes whose shape fits (the rest are counted), or null when the answer is not one. */
+  /** The time of a lane's last activity (ms), or null when it has none or it cannot be read. */
+  function activityMs(lane) {
+    const t = isStr(lane.last_activity_at) ? Date.parse(lane.last_activity_at) : NaN;
+    return Number.isFinite(t) ? t : null;
+  }
+  /** The lanes, the most recently updated first (ゆいた 2026-10-25「更新かかった最新が上に」). A lane without a readable
+   *  time goes to the bottom; lanes with the same time (or both without one) keep the order handoff returned. */
+  function newestFirst(lanes) {
+    return lanes
+      .map((l, i) => ({ l, i, t: activityMs(l) }))
+      .sort((a, b) => (a.t === null) - (b.t === null) || b.t - a.t || a.i - b.i) // null は上の項で分けた後だけ 0 として引く
+      .map((x) => x.l);
+  }
+  /** The answer of GET /pulse: the lanes whose shape fits, newest first (the rest are counted), or null when the answer is not one. */
   function readPulse(d) {
     if (!d || typeof d !== "object" || !Array.isArray(d.lanes)) return null;
     const lanes = d.lanes.filter(okLane);
-    return { lanes, skipped: d.lanes.length - lanes.length };
+    return { lanes: newestFirst(lanes), skipped: d.lanes.length - lanes.length };
   }
   /** The kind as shown: one of WAIT's keys (a kind handoff does not know yet = unknown). */
   function waitKind(lane) {
@@ -113,7 +126,7 @@
     if (status === 400 || status === 413 || status === 415) return "送った中身が受け付けられませんでした（" + status + "）。";
     return "handoff 側のエラーです（" + status + "）。";
   }
-  const PURE = { readPulse, waitKind, daysOld, isStale, checkNote, linkParts, noteError, WAIT, NOTE_MAX, PULSE_URL, NOTE_URL };
+  const PURE = { readPulse, newestFirst, activityMs, waitKind, daysOld, isStale, checkNote, linkParts, noteError, WAIT, NOTE_MAX, PULSE_URL, NOTE_URL };
   if (typeof document === "undefined") {
     if (typeof module === "object" && module.exports) module.exports = PURE;
     return;
