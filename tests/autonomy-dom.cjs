@@ -70,7 +70,7 @@ test("every ordered pair of tabs: only the clicked tab's panel is shown, only th
   const tabs = [...d.querySelectorAll("#tabs .tab")];
   const views = tabs.map((t) => t.dataset.view);
   assert.ok(views.includes("autonomy") && views.includes("taskgraf") && views.includes("chats") && views.length >= 6, views.join(","));
-  const panelOf = { taskgraf: ".tg-panel", chats: ".ch-panel", chatgpt: ".cg-panel", codex: ".cg-panel", autonomy: ".au-panel" };
+  const panelOf = { taskgraf: ".tg-panel", chats: ".ch-panel", chatgpt: ".cg-panel", codex: ".cg-panel", autonomy: ".au-panel", factory: ".fx-panel" };
   const expect = (v) => {
     const stream = d.getElementById("stream");
     const want = { stream: v === "tasks" || v === "standby" };
