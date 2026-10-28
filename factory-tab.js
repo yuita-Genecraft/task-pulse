@@ -180,6 +180,20 @@ window.parent.postMessage({type:'fx-ready'},'*');
     }
   }
 
+  function leave() {
+    if (panel.hidden) return;
+    panel.hidden = true;
+    const wrap = document.querySelector(".wrap");
+    wrap && wrap.classList.remove("v-factory");
+    // 行き先が自分の枠を持つ画面なら、その枠が出ている＝タスクの流れは戻さない
+    if (!document.querySelector(OTHER_PANELS)) stream.style.display = "";
+  }
+  // タブを押さずに画面が変わる道（サンプル・貼り付け・ファイル読込は setView("tasks") を直接呼ぶ）でも、
+  // 選択が工場から離れたら工場の枠をしまう
+  new MutationObserver(() => {
+    if (!panel.hidden && !tabs.querySelector('.tab.on[data-view="' + VIEW + '"]')) leave();
+  }).observe(tabs, { attributes: true, attributeFilter: ["class"], subtree: true });
+
   const OTHER_PANELS = ".tg-panel:not([hidden]),.ch-panel:not([hidden]),.cg-panel:not([hidden]),.au-panel:not([hidden])";
   tabs.addEventListener("click", (e) => {
     const b = e.target.closest(".tab");
@@ -196,11 +210,8 @@ window.parent.postMessage({type:'fx-ready'},'*');
         const pn = document.getElementById("pname");
         if (pn && !panel.hidden) pn.textContent = "工場";
       }, 0);
-    } else if (!panel.hidden) {
-      panel.hidden = true;
-      wrap && wrap.classList.remove("v-factory");
-      // 行き先が自分の枠を持つ画面なら、その枠が出ている＝タスクの流れは戻さない
-      if (!document.querySelector(OTHER_PANELS)) stream.style.display = "";
+    } else {
+      leave();
     }
   });
 })();

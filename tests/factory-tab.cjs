@@ -271,6 +271,30 @@ test("view switching: factory shows only its panel; leaving restores the stream 
   assert.ok(shown(fx) && !shown(stream));
 });
 
+test("a way back to the tasks that is not a tab click (サンプル・反映) closes the factory too", async () => {
+  for (const how of ["sample", "apply"]) {
+    const { w, d } = page();
+    await tick(w);
+    const stream = d.getElementById("stream");
+    const fx = d.getElementById("factoryPanel");
+    tab(d, "factory").click();
+    await tick(w);
+    assert.ok(!shown(stream) && shown(fx), how + ": the factory is open");
+    if (how === "sample") d.getElementById("btnSample").click();
+    else {
+      d.getElementById("ta").value = "- [ ] 試験のタスク";
+      d.getElementById("btnApply").click();
+    }
+    await tick(w);
+    assert.deepEqual([...d.querySelectorAll("#tabs .tab.on")].map((t) => t.dataset.view), ["tasks"], how + ": the selected tab is the tasks");
+    assert.ok(shown(stream) && !shown(fx), how + ": the task list is back and the factory panel is put away");
+    assert.ok(!d.querySelector(".wrap").classList.contains("v-factory"), how + ": no v-factory class left");
+    tab(d, "factory").click();
+    await tick(w);
+    assert.ok(!shown(stream) && shown(fx), how + ": the factory can be opened again");
+  }
+});
+
 test("the source's own rules", () => {
   const CODE = SRC.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
   assert.ok(!/localStorage|sessionStorage|indexedDB|console\.|innerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|allow-same-origin|allow-top-navigation|allow-popups|allow-forms/.test(CODE));
