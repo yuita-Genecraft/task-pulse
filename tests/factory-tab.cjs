@@ -60,7 +60,7 @@ function page({ hash = `#graph=${KEY}`, serve } = {}) {
         calls.push({ url: u, headers: init.headers || {}, credentials: init.credentials, referrerPolicy: init.referrerPolicy });
         if (u.startsWith(BASE)) {
           const name = u.slice(BASE.length);
-          const r = serve ? serve(name) : { status: 200, body: FILES[name] };
+          const r = serve ? serve(name) : FILES[name] ? { status: 200, body: FILES[name] } : null;
           if (!r) return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };
           const body = r.body || Buffer.alloc(0);
           return { ok: r.status >= 200 && r.status < 300, status: r.status, arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) };
@@ -302,6 +302,125 @@ test("the source's own rules", () => {
   const pins = [...SRC.matchAll(/^\s+"([^"]+)": "([0-9a-f]{64})",$/gm)];
   assert.deepEqual(pins.map((m) => m[1]).sort(), Object.keys(FILES).sort());
   assert.equal(new Set(pins.map((m) => m[2])).size, 5);
-  assert.deepEqual((CODE.match(/postMessage\(/g) || []).length, 1 + 1, "parent→iframe once, plus the shim's ready");
+  assert.deepEqual((CODE.match(/postMessage\(/g) || []).length, 2 + 1, "parent→iframe twice (the GLBs, the work snapshot), plus the shim's ready");
+  assert.ok(/postMessage\(\{ type: "fx-events", snapshot: snap \}, "\*"\)/.test(CODE), "the snapshot message carries the snapshot only");
   assert.ok(!/postMessage\([^)]*key/i.test(CODE));
+});
+
+// ---- 段2：実際の仕事の写し（GET /factory/events） ----
+const SNAP = { nodes: [{ id: "cc-jobs:pr:x__repo-1", title: "審査 repo #1 第1回", owner: "審査", goal: false, state: "done" }], edges: [], source: { kind: "execution-events", graphGeneratedAt: "2026-10-29T08:00:00.000Z" } };
+const eventsBody = (at, snap = SNAP) => Buffer.from(JSON.stringify({ received_at: at, snapshot: snap }));
+async function openAndReady(opts) {
+  const pg = page(opts);
+  await tick(pg.w);
+  tab(pg.d, "factory").click();
+  await tick(pg.w);
+  const f = pg.d.querySelector("iframe");
+  const sent = [];
+  f.contentWindow.postMessage = (data, target, transfer) => sent.push({ data, target, transfer });
+  pg.w.dispatchEvent(new pg.w.MessageEvent("message", { data: { type: "fx-ready" }, source: f.contentWindow }));
+  await tick(pg.w);
+  return { ...pg, f, sent, note: () => pg.d.querySelector(".fx-note").textContent };
+}
+
+test("events: nothing stored yet (404) → no snapshot is sent, the note says the sample is shown", async () => {
+  const { sent, calls, note } = await openAndReady();
+  assert.deepEqual(sent.map((s) => s.data.type), ["fx-glb", "fx-glb"]);
+  const ev = calls.filter((c) => c.url === BASE + "events");
+  assert.equal(ev.length, 1, "asked once, after the factory said it is ready");
+  assert.match(note(), /まだ届いていません/);
+});
+
+test("events: a stored snapshot → sent to the iframe once (no key in it), the note says real work is shown, re-sent only when newer", async () => {
+  let at = "2026-10-29T08:00:05.000Z";
+  const { w, d, sent, calls, note } = await openAndReady({ serve: (n) => (n === "events" ? { status: 200, body: eventsBody(at) } : { status: 200, body: FILES[n] }) });
+  const evMsgs = () => sent.filter((s) => s.data.type === "fx-events");
+  assert.equal(evMsgs().length, 1);
+  assert.deepEqual(Object.keys(evMsgs()[0].data).sort(), ["snapshot", "type"]);
+  assert.equal(JSON.stringify(evMsgs()[0].data.snapshot), JSON.stringify(SNAP));
+  assert.ok(!JSON.stringify(evMsgs()[0].data).includes(KEY), "the key is not in the message");
+  const ev = calls.filter((c) => c.url === BASE + "events");
+  assert.ok(ev.every((c) => c.headers.authorization === "Bearer " + KEY && c.credentials === "omit" && c.referrerPolicy === "no-referrer"), "the key only in Authorization, no cookies, no referrer");
+  assert.match(note(), /実際の仕事/);
+  // leave and come back: the same snapshot is not sent again, the factory files are not fetched again
+  const filesBefore = factoryCalls(calls).filter((c) => c.url !== BASE + "events").length;
+  tab(d, "tasks").click();
+  tab(d, "factory").click();
+  await tick(w);
+  assert.equal(evMsgs().length, 1, "same received_at → not sent again");
+  assert.equal(factoryCalls(calls).filter((c) => c.url !== BASE + "events").length, filesBefore, "the factory itself is not fetched again");
+  at = "2026-10-29T08:10:05.000Z";
+  tab(d, "tasks").click();
+  tab(d, "factory").click();
+  await tick(w);
+  assert.equal(evMsgs().length, 2, "a newer snapshot is sent");
+});
+
+test("events: a wrong shape, a wrong kind, too large, or an error → nothing sent, the sample stays", async () => {
+  const cases = [
+    { status: 200, body: Buffer.from("not json") },
+    { status: 200, body: Buffer.from(JSON.stringify({ received_at: "x", snapshot: { source: { kind: "task-pulse" } } })) },
+    { status: 200, body: Buffer.from(JSON.stringify({ snapshot: SNAP })) },
+    { status: 200, body: Buffer.alloc(300 * 1024 + 1, 32) },
+    { status: 500, body: Buffer.from("{}") },
+  ];
+  for (const c of cases) {
+    const { sent, note } = await openAndReady({ serve: (n) => (n === "events" ? c : { status: 200, body: FILES[n] }) });
+    assert.equal(sent.filter((s) => s.data.type === "fx-events").length, 0, JSON.stringify(c.body.slice(0, 40).toString()));
+    assert.match(note(), /見本/);
+  }
+});
+
+test("events: no snapshot is asked for before the factory is ready, and none without a key", async () => {
+  const pg = page();
+  await tick(pg.w);
+  tab(pg.d, "factory").click();
+  await tick(pg.w);
+  assert.equal(pg.calls.filter((c) => c.url === BASE + "events").length, 0, "not before fx-ready");
+  const nokey = page({ hash: "" });
+  await tick(nokey.w);
+  tab(nokey.d, "factory").click();
+  await tick(nokey.w);
+  assert.equal(nokey.calls.length, nokey.calls.filter((c) => !c.url.startsWith(BASE)).length);
+});
+
+test("the shim answers /api/execution-events only from the parent's snapshot, and loads it once the page has loaded", async () => {
+  const { w, d } = page();
+  await tick(w);
+  tab(d, "factory").click();
+  await tick(w);
+  const doc = d.querySelector("iframe").getAttribute("srcdoc");
+  const shim = /<script>([\s\S]*?)<\/script>/.exec(doc)[1];
+  const listeners = {};
+  const parent = { postMessage: () => {} };
+  let clicked = 0;
+  const docStub = { readyState: "loading", addEventListener: () => {}, getElementById: (id) => (id === "events-source" ? { click: () => clicked++ } : null) };
+  const sandbox = {
+    window: { parent, addEventListener: (t, fn) => (listeners[t] = fn), fetch: (u) => Promise.resolve({ real: String(u) }) },
+    document: docStub,
+    Response: class { constructor(b, i) { this.b = b; this.i = i; } },
+    TypeError, Promise, Map, JSON, String, ArrayBuffer,
+  };
+  vm.runInNewContext(shim, sandbox);
+  const f = sandbox.window.fetch;
+  await assert.rejects(() => f("/api/execution-events"), /offline/, "before a snapshot: refused like every other /api");
+  listeners.message({ source: { not: "parent" }, data: { type: "fx-events", snapshot: SNAP } });
+  await assert.rejects(() => f("/api/execution-events"), /offline/, "a stranger's snapshot is ignored");
+  listeners.message({ source: parent, data: { type: "fx-events", snapshot: { source: { kind: "other" } } } });
+  await assert.rejects(() => f("/api/execution-events"), /offline/, "a snapshot of another kind is ignored");
+  listeners.message({ source: parent, data: { type: "fx-events", snapshot: SNAP } });
+  const r = await f("/api/execution-events");
+  assert.equal(r.i.status, 200);
+  assert.deepEqual(JSON.parse(r.b), SNAP);
+  await assert.rejects(() => f("/api/task-pulse"), /offline/, "other /api paths stay refused");
+  await assert.rejects(() => f("https://evil.example/api/execution-events"), /offline/, "only the page's own relative path is answered");
+  assert.equal(clicked, 0, "not clicked before the page has loaded");
+  assert.equal(typeof listeners.load, "function", "waits for load");
+  docStub.readyState = "complete";
+  listeners.load();
+  assert.equal(clicked, 1, "after load, the factory's 明示実行イベント is pressed once");
+  listeners.message({ source: parent, data: { type: "fx-events", snapshot: SNAP } });
+  assert.equal(clicked, 1, "the very same object is not loaded twice");
+  listeners.message({ source: parent, data: { type: "fx-events", snapshot: { ...SNAP } } });
+  assert.equal(clicked, 2, "a new snapshot is loaded");
 });
