@@ -1,5 +1,6 @@
 // factory — Task Pulse の「工場」タブ。3D 工場（Flow Foundry・見本データの build）を、タブを開いた時に初めて 1 回だけ取って見せる。
-// 段1：見本のデータで動く。本物のタスクにはつながない（/graph・/pulse はこのファイルでは読まない）。
+// 段1：見本のデータで動く。段2：handoff の GET /factory/events（同じ読む鍵）に実際の仕事（審査・実行）の最新の写しがあれば、
+// それを工場へ渡して映す（無い・取れない時は見本のまま）。/graph・/pulse はこのファイルでは読まない。
 //
 // 工場のファイル（約 11 MB）は、この公開 repo には置かない。handoff の GET /factory/<file>（読む鍵の Bearer が無ければ 404・handoff-mcp の
 // docs/factory-assets.md）から、タブを開いた時に、親ページが鍵を付けて取る。
@@ -9,8 +10,9 @@
 // - 鍵は、読むだけの鍵（# の後ろの #graph=…・taskgraf と同じ）を、固定の送り先 BASE の /factory/ への Authorization ヘッダーにだけ使う。
 //   iframe には渡さない（srcdoc にも postMessage にも URL にも入れない）。localStorage などに書かない。console に出さない。
 // - 工場は sandbox="allow-scripts"（allow-same-origin なし）の iframe に隔離する：親の URL・localStorage・cookie に触れない。
-//   iframe の中の fetch は、GLB 2 つ（親が postMessage で渡すバイト）と、iframe 自身が作った blob:/data:（GLB に入っている画像を開くのに three.js が使う・外へ出ない）以外は全部断る（/api/* も外へ出ない＝工場は見本のまま「取得に失敗しました」と出す）。
-//   iframe 内のリンクは動かさない。親から iframe へ渡すのは、GLB 2 つのバイトだけ。
+//   iframe の中の fetch は、GLB 2 つ（親が postMessage で渡すバイト）と、iframe 自身が作った blob:/data:（GLB に入っている画像を開くのに three.js が使う・外へ出ない）、
+//   それに /api/execution-events（親が渡した写しで答える・外へは出ない）以外は全部断る（ほかの /api/* も外へ出ない）。
+//   iframe 内のリンクは動かさない。親から iframe へ渡すのは、GLB 2 つのバイトと、実際の仕事の写し（鍵は入らない）だけ。
 // - 17 MB を取るのは、タブを開いた時だけ。一度作った iframe は、別のタブへ移っても消さない（戻った時に取り直さない）。失敗したら「もう一度」だけ出す。
 (() => {
   "use strict";
@@ -48,9 +50,14 @@ const NAMES=${JSON.stringify(GLBS)};
 const waiting=new Map(),got=new Map();
 const want=(n)=>got.has(n)?Promise.resolve(got.get(n)):new Promise((r)=>{const a=waiting.get(n)||[];a.push(r);waiting.set(n,a);});
 const realFetch=window.fetch.bind(window);
+let events=null,shownKey=null;
 window.fetch=function(input,init){
   const u=String(typeof input==='string'?input:(input&&input.url)||'');
   if(/^(blob|data):/.test(u))return realFetch(input,init);
+  if(u==='/api/execution-events'){
+    if(!events)return Promise.reject(new TypeError('offline'));
+    return Promise.resolve(new Response(JSON.stringify(events),{status:200,headers:{'content-type':'application/json'}}));
+  }
   const n=NAMES.find((x)=>u.endsWith('/'+x));
   if(!n)return Promise.reject(new TypeError('offline'));
   return want(n).then((b)=>new Response(b.slice(0),{status:200,headers:{'content-type':'model/gltf-binary'}}));
@@ -58,11 +65,21 @@ window.fetch=function(input,init){
 window.addEventListener('message',(e)=>{
   if(e.source!==window.parent)return;
   const d=e.data;
+  if(d&&d.type==='fx-events'&&d.snapshot&&typeof d.snapshot==='object'&&d.snapshot.source&&d.snapshot.source.kind==='execution-events'){events=d.snapshot;showEvents();return;}
   if(!d||d.type!=='fx-glb'||!NAMES.includes(d.name)||!(d.buf instanceof ArrayBuffer))return;
   got.set(d.name,d.buf);
   for(const r of waiting.get(d.name)||[])r(d.buf);
   waiting.delete(d.name);
 });
+function showEvents(){
+  if(document.readyState!=='complete'){window.addEventListener('load',showEvents,{once:true});return;}
+  if(!events)return;
+  // 同じ写しかは中身で決める（postMessage は毎回複製を渡すので、物の同一性では比べられない）
+  const k=JSON.stringify(events);
+  if(k===shownKey)return;
+  const b=document.getElementById('events-source');
+  if(b){shownKey=k;b.click();}
+}
 document.addEventListener('click',(e)=>{if(e.target&&e.target.closest&&e.target.closest('a'))e.preventDefault();},true);
 window.parent.postMessage({type:'fx-ready'},'*');
 })();<\/script>`;
@@ -103,7 +120,8 @@ window.parent.postMessage({type:'fx-ready'},'*');
   msgBox.hidden = true;
   const note = document.createElement("p");
   note.className = "fx-note";
-  note.textContent = "見本のデータで動く 3D の工場です。本物のタスクにはまだつながっていません。";
+  const NOTE_SAMPLE = "見本のデータで動く 3D の工場です。実際の仕事の記録はまだ届いていません。";
+  note.textContent = NOTE_SAMPLE;
   panel.append(msgBox, note);
   stream.insertAdjacentElement("afterend", panel);
 
@@ -122,6 +140,45 @@ window.parent.postMessage({type:'fx-ready'},'*');
 
   let frame = null;
   let loading = false;
+  let ready = false;
+  let eventsAt = null;
+  let eventsBusy = false;
+  const EVENTS_MAX = 300 * 1024;
+  // 実際の仕事（審査の投入・実行・PASS・BLOCK など）の最新の写しを取り、工場へ渡す。鍵は渡さない。無い・失敗＝見本のまま。
+  async function sendEvents() {
+    if (!frame || !ready || eventsBusy) return;
+    const key = readKey();
+    if (!key) return;
+    eventsBusy = true;
+    try {
+      const res = await fetch(BASE + "events", {
+        method: "GET",
+        headers: { authorization: "Bearer " + key },
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+        cache: "no-store",
+      });
+      if (res.status === 404) {
+        if (!eventsAt) note.textContent = NOTE_SAMPLE;
+        return;
+      }
+      if (!res.ok) throw new Error("http " + res.status);
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > EVENTS_MAX) throw new Error("size");
+      const got = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buf));
+      const snap = got && got.snapshot;
+      if (typeof got.received_at !== "string" || !snap || typeof snap !== "object" || !snap.source || snap.source.kind !== "execution-events") throw new Error("shape");
+      if (got.received_at === eventsAt) return;
+      frame.contentWindow.postMessage({ type: "fx-events", snapshot: snap }, "*");
+      eventsAt = got.received_at;
+      const t = new Date(got.received_at);
+      note.textContent = "実際の仕事（審査・実行の記録）を表示しています。" + (isNaN(t) ? "" : "受け取った時刻：" + t.toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) + "。");
+    } catch {
+      if (!eventsAt) note.textContent = "実際の仕事の記録を取れませんでした。見本のデータを表示しています。";
+    } finally {
+      eventsBusy = false;
+    }
+  }
   async function fetchFile(name, key) {
     const res = await fetch(BASE + name, {
       method: "GET",
@@ -154,7 +211,7 @@ window.parent.postMessage({type:'fx-ready'},'*');
       if (!srcdoc) throw new Error("shape");
       const f = document.createElement("iframe");
       f.className = "fx-frame";
-      f.title = "Flow Foundry（3D 工場・見本データ）";
+      f.title = "Flow Foundry（3D 工場）";
       f.setAttribute("sandbox", "allow-scripts");
       f.setAttribute("referrerpolicy", "no-referrer");
       const onMessage = (e) => {
@@ -164,6 +221,8 @@ window.parent.postMessage({type:'fx-ready'},'*');
           const copy = files[n].slice(0);
           f.contentWindow.postMessage({ type: "fx-glb", name: n, buf: copy }, "*", [copy]);
         }
+        ready = true;
+        void sendEvents();
       };
       window.addEventListener("message", onMessage);
       f.srcdoc = srcdoc;
@@ -205,6 +264,7 @@ window.parent.postMessage({type:'fx-ready'},'*');
       wrap && wrap.classList.add("v-factory");
       tabs.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t === b));
       void load();
+      void sendEvents(); // 開き直した時は新しい記録だけ取り直す（工場そのものは取り直さない）
       // 既存の処理がタスクの見出しを書いた後に、この画面の見出しに置き換える
       setTimeout(() => {
         const pn = document.getElementById("pname");

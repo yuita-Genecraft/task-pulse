@@ -29,13 +29,17 @@ t('parentDoc', () => parent.document.title);
 t('topHref', () => top.location.href);
 t('localStorage', () => localStorage.length);
 t('cookie', () => document.cookie);
+// 段2：工場の「明示実行イベント」の代わり。押されたら /api/execution-events を読み、届いた中身を親へ知らせる
+document.getElementById('events-source').addEventListener('click', () => {
+  fetch('/api/execution-events').then((r) => r.json()).then((j) => parent.postMessage({ fxEvents: { kind: j.source.kind, nodes: j.nodes.length } }, '*'), (e) => parent.postMessage({ fxEvents: { error: String(e) } }, '*'));
+});
 Promise.allSettled([fetch('https://example.com/'), fetch('/api/anything'), fetch('http://127.0.0.1:1/x')]).then((rs) => {
   out.fetches = rs.map((r) => r.status);
   parent.postMessage({ fxProbe: out }, '*');
 });
 `;
 const FILES = {
-  "index.html": Buffer.from('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="factory.css"><script type="module" src="factory.js"></script></head><body><a class="brand" href="./">T</a><div id="scene"></div></body></html>'),
+  "index.html": Buffer.from('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="factory.css"><script type="module" src="factory.js"></script></head><body><a class="brand" href="./">T</a><button id="events-source">E</button><div id="scene"></div></body></html>'),
   "factory.css": Buffer.from("body{margin:0}"),
   "factory.js": Buffer.from(PROBE),
   "assets/modules.glb": Buffer.from([1, 2, 3, 4]),
@@ -48,6 +52,10 @@ test("in real Chrome: the factory iframe is cut off from the parent, storage and
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, "http://x");
     seen.push({ url: req.url, auth: req.headers.authorization || "" });
+    if (u.pathname === "/factory/events") {
+      if (req.headers.authorization !== "Bearer " + KEY) return void res.writeHead(404).end("nf");
+      return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ received_at: "2026-10-29T08:00:05.000Z", snapshot: { nodes: [{ id: "a" }, { id: "b" }], edges: [], source: { kind: "execution-events", graphGeneratedAt: "2026-10-29T08:00:00.000Z" } } }));
+    }
     if (u.pathname.startsWith("/factory/")) {
       const f = FILES[u.pathname.slice("/factory/".length)];
       if (!f || req.headers.authorization !== "Bearer " + KEY) return void res.writeHead(404).end("nf");
@@ -94,7 +102,7 @@ test("in real Chrome: the factory iframe is cut off from the parent, storage and
     await send("Page.navigate", { url: `http://127.0.0.1:${port}/#graph=${KEY}` });
     await sleep(1500);
     assert.equal(seen.filter((s) => s.url.startsWith("/factory/")).length, 0, "nothing fetched before the tab is opened");
-    await ev("window.__probe=null;addEventListener('message',e=>{if(e.data&&e.data.fxProbe)window.__probe=e.data.fxProbe});document.querySelector('#tabs .tab[data-view=factory]').click()");
+    await ev("window.__probe=null;window.__events=null;addEventListener('message',e=>{if(e.data&&e.data.fxProbe)window.__probe=e.data.fxProbe;if(e.data&&e.data.fxEvents)window.__events=e.data.fxEvents});document.querySelector('#tabs .tab[data-view=factory]').click()");
     let probe = null;
     for (let i = 0; i < 60 && !probe; i++) {
       await sleep(500);
@@ -106,8 +114,16 @@ test("in real Chrome: the factory iframe is cut off from the parent, storage and
     assert.deepEqual(probe.fetches, ["rejected", "rejected", "rejected"], "every outside fetch is refused");
     const attrs = JSON.parse(await ev("(()=>{const f=document.querySelector('iframe');return JSON.stringify({sandbox:f.getAttribute('sandbox'),src:f.getAttribute('src'),key:f.getAttribute('srcdoc').includes(" + JSON.stringify(KEY) + ")})})()"));
     assert.deepEqual(attrs, { sandbox: "allow-scripts", src: null, key: false });
+    let evs = null;
+    for (let i = 0; i < 20 && !evs; i++) {
+      await sleep(250);
+      evs = await ev("window.__events");
+    }
+    assert.deepEqual(evs, { kind: "execution-events", nodes: 2 }, "段2: the snapshot reached the factory through /api/execution-events, loaded without a click");
+    assert.match(await ev("document.querySelector('.fx-note').textContent"), /実際の仕事/);
     const f = seen.filter((s) => s.url.startsWith("/factory/"));
-    assert.equal(f.length, 5, "exactly the 5 pinned files");
+    assert.equal(f.filter((s) => s.url !== "/factory/events").length, 5, "exactly the 5 pinned files");
+    assert.equal(f.filter((s) => s.url === "/factory/events").length, 1, "and the work snapshot once");
     assert.ok(f.every((s) => s.auth === "Bearer " + KEY), "the key only in Authorization");
     assert.ok(!seen.some((s) => s.url.includes(KEY)), "the key is in no URL");
     assert.ok(!seen.some((s) => !s.url.startsWith("/factory/") && s.url !== "/" && s.url !== "/tasks.md" && !s.url.startsWith("/?") && !s.url.startsWith("/favicon")), "no other request reached the server: " + JSON.stringify(seen.map((s) => s.url)));
