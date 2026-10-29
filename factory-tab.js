@@ -50,7 +50,7 @@ const NAMES=${JSON.stringify(GLBS)};
 const waiting=new Map(),got=new Map();
 const want=(n)=>got.has(n)?Promise.resolve(got.get(n)):new Promise((r)=>{const a=waiting.get(n)||[];a.push(r);waiting.set(n,a);});
 const realFetch=window.fetch.bind(window);
-let events=null,shown=null;
+let events=null,shownKey=null;
 window.fetch=function(input,init){
   const u=String(typeof input==='string'?input:(input&&input.url)||'');
   if(/^(blob|data):/.test(u))return realFetch(input,init);
@@ -73,9 +73,12 @@ window.addEventListener('message',(e)=>{
 });
 function showEvents(){
   if(document.readyState!=='complete'){window.addEventListener('load',showEvents,{once:true});return;}
-  if(!events||shown===events)return;
+  if(!events)return;
+  // 同じ写しかは中身で決める（postMessage は毎回複製を渡すので、物の同一性では比べられない）
+  const k=JSON.stringify(events);
+  if(k===shownKey)return;
   const b=document.getElementById('events-source');
-  if(b){shown=events;b.click();}
+  if(b){shownKey=k;b.click();}
 }
 document.addEventListener('click',(e)=>{if(e.target&&e.target.closest&&e.target.closest('a'))e.preventDefault();},true);
 window.parent.postMessage({type:'fx-ready'},'*');

@@ -421,6 +421,8 @@ test("the shim answers /api/execution-events only from the parent's snapshot, an
   assert.equal(clicked, 1, "after load, the factory's 明示実行イベント is pressed once");
   listeners.message({ source: parent, data: { type: "fx-events", snapshot: SNAP } });
   assert.equal(clicked, 1, "the very same object is not loaded twice");
-  listeners.message({ source: parent, data: { type: "fx-events", snapshot: { ...SNAP } } });
-  assert.equal(clicked, 2, "a new snapshot is loaded");
+  listeners.message({ source: parent, data: { type: "fx-events", snapshot: JSON.parse(JSON.stringify(SNAP)) } });
+  assert.equal(clicked, 1, "a copy with the same content (what postMessage delivers) is not loaded again");
+  listeners.message({ source: parent, data: { type: "fx-events", snapshot: { ...SNAP, source: { ...SNAP.source, graphGeneratedAt: "2026-10-29T08:10:00.000Z" } } } });
+  assert.equal(clicked, 2, "a snapshot whose content changed is loaded");
 });
