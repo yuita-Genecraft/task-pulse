@@ -22,7 +22,7 @@
   const PINS = {
     "index.html": "7e377e8425b99b170666ed2dfc34c85f7101496d3986ae8c00de4f99003c3dde",
     "factory.css": "7ae6a1f87752c1e35bb27c013e98f4e28baeb9bd13f0f40b2984341c32c302c9",
-    "factory.js": "ac5c3e5b27a3efc22c6409ab30705bb76a414ba5744ac3ee710d6a426c9d9cfc",
+    "factory.js": "be451ecb701e4acbc1f2e3dbf6d5024160d2b06ba499a7f71d2eb00a28f2159b",
     "assets/modules.glb": "287d94ae16ca63bd389637aaf7c0f27b7989820a12f0a91942f8c5a82647c2ab",
     "assets/courier.glb": "1e3a666d92279259ac14c3ba5a933b31288d4f7fd5909f6f7dd1abac27d807a9",
   };
