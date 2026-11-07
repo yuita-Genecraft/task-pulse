@@ -18,7 +18,7 @@ describe("PostStock Unit and Integration Tests", () => {
           state: "qualified",
           body: "exact final body\nwith newline & special chars <script>alert(1)</script>",
           bodySha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-          expiresAt: 1794110000,
+          expiresAt: Math.floor(Date.now() / 1000) + 86400,
           imageUrl: "https://drive.google.com/file/d/DRIVE_FILE_ID_1/view"
         }
       ]
