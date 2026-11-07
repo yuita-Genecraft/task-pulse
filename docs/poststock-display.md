@@ -21,3 +21,9 @@ poststock.jsは本文をtextContentで表示し、選べる完成稿と予約済
 依存は既存のjsdom25.0.1のみ。新規5件は管理節の解析、安全なDOMと画像リンク、実ブラウザ文脈で本文コピー、予約/失効の計数、実index.htmlで旧スタンバイとの共存を確認する。既存ページfixtureは新しいparser-blocking scriptも読み込むようにし、既存タブ等のassertionは変えない。実モデル・実Driveには書き込まない。
 
 実装はAGY02、試験文脈の修正はAGY05。Codex rootは機械的統合、固定headの検証、独立レビューへの素材と引継ぎを担当。重要PRとして独立Codex CLIレビューを受ける。実表示の完成は、Mac同期側のレビュー済み反映とDrive読戻し、Pages配備後の画面で確認する。
+
+## r1からの修正と相互の審査材料
+
+r1（aa42b9a）はBLOCK 3件。AGY06が不正なitemを黙って捨てず構造エラーにする修正と、実indexのfetch応答から完成稿・手積みカードの両方が作られる共存試験へ修正した。空のitems配列は正当な0件として扱う。共存試験はmockした既存pub/poststock応答を待って、実タブを選択し、本文・利用可能数・手積みカードを確認する（renderSectionの直接呼出しや手製カードでは代用しない）。
+
+残る資料不足は、対となるxhassin-pipeline PR97の固定head/hash、caller/helper/stock.py、APPLY全文・plan・本番read-only CHECK_OKをr2へ同梱して解消する。Mac r2の2つの未修正残件（特殊改行の表示正規化・初回末尾空行）はMac側の明示どおりで、本人の極低頻度・低影響除外方針に従う。元stock・投稿を変更するものではない。UIは受け取った本文を変えない。

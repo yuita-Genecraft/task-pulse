@@ -67,14 +67,25 @@
 
     const validItems = [];
     for (const item of payload.items) {
-      if (!item || typeof item !== "object") continue;
-      if (typeof item.id !== "string" || !ID_RE.test(item.id)) continue;
-      if (item.state !== "qualified" && item.state !== "reserved") continue;
-      if (typeof item.frame !== "string") continue;
-      if (typeof item.body !== "string") continue;
-      if (typeof item.bodySha256 !== "string" || !SHA_RE.test(item.bodySha256)) continue;
-      if (typeof item.expiresAt !== "number" || !Number.isFinite(item.expiresAt) || item.expiresAt <= 0) continue;
-      if (typeof item.imageUrl !== "string" || !IMAGE_URL_RE.test(item.imageUrl)) continue;
+      if (
+        !item ||
+        typeof item !== "object" ||
+        Array.isArray(item) ||
+        typeof item.id !== "string" ||
+        !ID_RE.test(item.id) ||
+        (item.state !== "qualified" && item.state !== "reserved") ||
+        typeof item.frame !== "string" ||
+        typeof item.body !== "string" ||
+        typeof item.bodySha256 !== "string" ||
+        !SHA_RE.test(item.bodySha256) ||
+        typeof item.expiresAt !== "number" ||
+        !Number.isFinite(item.expiresAt) ||
+        item.expiresAt <= 0 ||
+        typeof item.imageUrl !== "string" ||
+        !IMAGE_URL_RE.test(item.imageUrl)
+      ) {
+        throw new Error("Invalid item in managed block");
+      }
 
       validItems.push({
         id: item.id,
