@@ -43,7 +43,7 @@ test.afterEach(() => {
 
 function page({ hash = `#graph=${KEY}`, serve } = {}) {
   let html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-  html = html.replace(/<script src="([^"]+)" defer><\/script>/g, (_, f) => {
+  html = html.replace(/<script src="([^"]+)"(?: defer)?><\/script>/g, (_, f) => {
     const code = f === "factory-tab.js" ? testSource() : fs.readFileSync(path.join(ROOT, f), "utf8");
     return `<script>${code.replace(/<\/script/g, "<\\/script")}</script>`;
   });
