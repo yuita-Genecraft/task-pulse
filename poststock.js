@@ -12,6 +12,7 @@
   const BEGIN_MARKER = "<!--TOKA_QUALIFIED_STOCK_V1_BEGIN-->";
   const END_MARKER = "<!--TOKA_QUALIFIED_STOCK_V1_END-->";
   const ID_RE = /^[0-9a-f]{24}$/;
+  const PS_ID_RE = /^ps[0-9]{2,}$/;
   const SHA_RE = /^[0-9a-f]{64}$/;
   const IMAGE_URL_RE = /^https:\/\/drive\.google\.com\/file\/d\/[a-zA-Z0-9_-]+\/view$/;
 
@@ -73,6 +74,7 @@
         Array.isArray(item) ||
         typeof item.id !== "string" ||
         !ID_RE.test(item.id) ||
+        (item.psId !== undefined && (typeof item.psId !== "string" || !PS_ID_RE.test(item.psId))) ||
         (item.state !== "qualified" && item.state !== "reserved") ||
         typeof item.frame !== "string" ||
         typeof item.body !== "string" ||
@@ -87,7 +89,7 @@
         throw new Error("Invalid item in managed block");
       }
 
-      validItems.push({
+      const validItem = {
         id: item.id,
         frame: item.frame,
         state: item.state,
@@ -95,7 +97,12 @@
         bodySha256: item.bodySha256,
         expiresAt: item.expiresAt,
         imageUrl: item.imageUrl
-      });
+      };
+      if (item.psId !== undefined) {
+        validItem.psId = item.psId;
+      }
+
+      validItems.push(validItem);
     }
 
     return {
@@ -157,6 +164,11 @@
 
     const top = doc.createElement("div");
     top.className = "poststock-top";
+
+    const ps = doc.createElement("span");
+    ps.className = "poststock-ps";
+    ps.textContent = item.psId ? item.psId.toUpperCase() : "採番待ち";
+    top.appendChild(ps);
 
     const frame = doc.createElement("span");
     frame.className = "poststock-frame";
@@ -302,6 +314,7 @@
     BEGIN_MARKER,
     END_MARKER,
     ID_RE,
+    PS_ID_RE,
     SHA_RE,
     IMAGE_URL_RE,
     parse,

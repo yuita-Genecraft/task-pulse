@@ -14,6 +14,7 @@ describe("PostStock Unit and Integration Tests", () => {
       items: [
         {
           id: "1234567890abcdef12345678",
+          psId: "ps50",
           frame: "技",
           state: "qualified",
           body: "exact final body\nwith newline & special chars <script>alert(1)</script>",
@@ -27,13 +28,38 @@ describe("PostStock Unit and Integration Tests", () => {
   ].join("\n");
 
   test("1. parse exact body, missing managed block, and malformed blocks", () => {
-    // Exact body preserved
+    // Exact body preserved and psId parsed
     const res = PostStock.parse(sampleManagedBlock);
     assert.ok(res);
     assert.equal(res.version, 1);
     assert.equal(res.syncedAt, 1794020000);
     assert.equal(res.items.length, 1);
     assert.equal(res.items[0].body, "exact final body\nwith newline & special chars <script>alert(1)</script>");
+    assert.equal(res.items[0].psId, "ps50");
+
+    // Backward compatibility: legacy item without psId remains readable and retains undefined psId
+    const legacyBlock = [
+      "<!--TOKA_QUALIFIED_STOCK_V1_BEGIN-->",
+      JSON.stringify({
+        version: 1,
+        syncedAt: 1794020000,
+        items: [
+          {
+            id: "1234567890abcdef12345678",
+            frame: "技",
+            state: "qualified",
+            body: "legacy item without psId",
+            bodySha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            expiresAt: Math.floor(Date.now() / 1000) + 86400,
+            imageUrl: "https://drive.google.com/file/d/DRIVE_FILE_ID_1/view"
+          }
+        ]
+      }),
+      "<!--TOKA_QUALIFIED_STOCK_V1_END-->"
+    ].join("\n");
+    const legacyRes = PostStock.parse(legacyBlock);
+    assert.ok(legacyRes);
+    assert.equal(legacyRes.items[0].psId, undefined);
 
     // Absent managed block returns null
     const absent = PostStock.parse("## Just markdown\nNo markers here.");
@@ -62,6 +88,28 @@ describe("PostStock Unit and Integration Tests", () => {
         "<!--TOKA_QUALIFIED_STOCK_V1_BEGIN-->\n{\"version\":2,\"syncedAt\":1,\"items\":[]}\n<!--TOKA_QUALIFIED_STOCK_V1_END-->"
       );
     }, /Unsupported managed block version/);
+
+    // Malformed: invalid psId throws structural error
+    assert.throws(() => {
+      PostStock.parse(
+        "<!--TOKA_QUALIFIED_STOCK_V1_BEGIN-->\n" +
+        JSON.stringify({
+          version: 1,
+          syncedAt: 1794020000,
+          items: [{
+            id: "1234567890abcdef12345678",
+            psId: "invalid_ps",
+            frame: "技",
+            state: "qualified",
+            body: "malformed psId",
+            bodySha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            expiresAt: Math.floor(Date.now() / 1000) + 86400,
+            imageUrl: "https://drive.google.com/file/d/DRIVE_FILE_ID_1/view"
+          }]
+        }) +
+        "\n<!--TOKA_QUALIFIED_STOCK_V1_END-->"
+      );
+    }, /Invalid item/);
   });
 
   test("2. safe DOM rendering, whitelisted href, exact body textContent, and clipboard copy", async () => {
@@ -71,6 +119,7 @@ describe("PostStock Unit and Integration Tests", () => {
 
     const validItem = {
       id: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      psId: "ps50",
       frame: "枠",
       state: "qualified",
       body: "XSS test: <img src=x onerror=alert('xss')> | Markdown table | marker <!--word-->",
@@ -119,6 +168,27 @@ describe("PostStock Unit and Integration Tests", () => {
       "<!--TOKA_QUALIFIED_STOCK_V1_END-->"
     ].join("\n");
 
+    const invalidPsPayload = [
+      "<!--TOKA_QUALIFIED_STOCK_V1_BEGIN-->",
+      JSON.stringify({
+        version: 1,
+        syncedAt: 1794020000,
+        items: [
+          {
+            id: "cccccccccccccccccccccccc",
+            psId: "ps1",
+            frame: "枠",
+            state: "qualified",
+            body: "invalid psId regex",
+            bodySha256: "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            expiresAt: 2000000000,
+            imageUrl: "https://drive.google.com/file/d/VALID_ID_123/view"
+          }
+        ]
+      }),
+      "<!--TOKA_QUALIFIED_STOCK_V1_END-->"
+    ].join("\n");
+
     const validPayload = [
       "<!--TOKA_QUALIFIED_STOCK_V1_BEGIN-->",
       JSON.stringify({
@@ -137,11 +207,34 @@ describe("PostStock Unit and Integration Tests", () => {
       PostStock.parse(unsafeUrlPayload);
     }, /Invalid item/);
 
+    assert.throws(() => {
+      PostStock.parse(invalidPsPayload);
+    }, /Invalid item/);
+
     const parsed = PostStock.parse(validPayload);
     assert.equal(parsed.items.length, 1, "Only the whitelisted and valid item is retained");
 
     const section = dom.window.PostStock.renderSection({ status: "ready", data: parsed }, { document: doc, now: 1000000000 });
     doc.body.appendChild(section);
+
+    // Verify rendered visible .poststock-ps label PS50 from psId uppercase
+    const psEl = section.querySelector(".poststock-ps");
+    assert.ok(psEl);
+    assert.equal(psEl.textContent, "PS50");
+
+    // Backward compatibility: unnumbered old feed card shows 採番待ち
+    const unnumberedCard = dom.window.PostStock.renderCard({
+      id: "dddddddddddddddddddddddd",
+      frame: "枠",
+      state: "qualified",
+      body: "Unnumbered legacy feed item",
+      bodySha256: "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+      expiresAt: 2000000000,
+      imageUrl: "https://drive.google.com/file/d/VALID_ID_123/view"
+    }, doc);
+    const unnumberedPsEl = unnumberedCard.querySelector(".poststock-ps");
+    assert.ok(unnumberedPsEl);
+    assert.equal(unnumberedPsEl.textContent, "採番待ち");
 
     // Verify safe DOM: textContent preserves exact string, no <img> injected
     const bodyEl = section.querySelector(".poststock-body");
@@ -184,6 +277,7 @@ describe("PostStock Unit and Integration Tests", () => {
       items: [
         {
           id: "111111111111111111111111",
+          psId: "ps51",
           frame: "技",
           state: "qualified",
           body: "Active available 1",
@@ -193,6 +287,7 @@ describe("PostStock Unit and Integration Tests", () => {
         },
         {
           id: "222222222222222222222222",
+          psId: "ps52",
           frame: "枠",
           state: "qualified",
           body: "Expired qualified",
@@ -204,13 +299,14 @@ describe("PostStock Unit and Integration Tests", () => {
           id: "333333333333333333333333",
           frame: "型",
           state: "reserved",
-          body: "Active reserved",
+          body: "Active reserved (legacy without psId)",
           bodySha256: "0".repeat(64),
           expiresAt: now + 7200, // active
           imageUrl: "https://drive.google.com/file/d/ID3/view"
         },
         {
           id: "444444444444444444444444",
+          psId: "ps54",
           frame: "型",
           state: "reserved",
           body: "Expired reserved",
@@ -230,6 +326,10 @@ describe("PostStock Unit and Integration Tests", () => {
     assert.ok(section.textContent.includes("予約済み"));
     const cards = section.querySelectorAll(".poststock-card");
     assert.equal(cards.length, 2, "Only non-expired cards (1 available, 1 reserved) are rendered");
+
+    // Assert parsed/rendered actual PS id and backward compatibility
+    assert.equal(cards[0].querySelector(".poststock-ps").textContent, "PS51");
+    assert.equal(cards[1].querySelector(".poststock-ps").textContent, "採番待ち");
 
     // Tokyo date check
     const formattedDate = PostStock.formatDateTokyo(1794110000);
@@ -352,6 +452,11 @@ describe("PostStock Unit and Integration Tests", () => {
       const bodyEl = stream.querySelector(".poststock-body");
       assert.ok(bodyEl, "Card body rendered");
       assert.equal(bodyEl.textContent, "exact final body\nwith newline & special chars <script>alert(1)</script>");
+
+      // Assert actual PS number from payload, not inferred from index
+      const psEl = stream.querySelector(".poststock-ps");
+      assert.ok(psEl, "PS label element rendered");
+      assert.equal(psEl.textContent, "PS50", "Actual fetch integration asserts number from payload, not index");
 
       const copyBtn = stream.querySelector(".poststock-copy-btn");
       assert.ok(copyBtn, "Copy button rendered");
