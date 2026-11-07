@@ -62,7 +62,7 @@ test("in real Chrome: the factory iframe is cut off from the parent, storage and
       return void res.writeHead(200, { "content-type": "application/octet-stream", "access-control-allow-origin": "*" }).end(f);
     }
     let html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-    html = html.replace(/<script src="([^"]+)" defer><\/script>/g, (_, f) => {
+    html = html.replace(/<script src="([^"]+)"(?: defer)?><\/script>/g, (_, f) => {
       let code = fs.readFileSync(path.join(ROOT, f), "utf8");
       if (f === "factory-tab.js") {
         code = code.replace("https://handoff-mcp.gooooerer.workers.dev/factory/", `http://127.0.0.1:${port}/factory/`);

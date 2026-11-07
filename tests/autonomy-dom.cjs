@@ -26,7 +26,7 @@ test.afterEach(() => {
 
 function page({ hash = "#graph=read-key&note=note-key-0123456789-0123456789", lanes: given } = {}) {
   let html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-  html = html.replace(/<script src="([^"]+)" defer><\/script>/g, (_, f) => `<script>${fs.readFileSync(path.join(ROOT, f), "utf8").replace(/<\/script/g, "<\\/script")}</script>`);
+  html = html.replace(/<script src="([^"]+)"(?: defer)?><\/script>/g, (_, f) => `<script>${fs.readFileSync(path.join(ROOT, f), "utf8").replace(/<\/script/g, "<\\/script")}</script>`);
   const calls = [];
   const held = [];
   const lanes = given || [

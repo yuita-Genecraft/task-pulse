@@ -136,6 +136,21 @@
   .sempty{margin:40px 6px; text-align:center; color:var(--muted)}
   .sempty code{font:12px/1.6 var(--mono); color:var(--text); background:var(--surface-2); padding:2px 6px; border-radius:5px}
 
+  /* 完成稿カード */
+  .poststock-section{margin-bottom:16px}
+  .poststock-header{display:flex; align-items:center; justify-content:space-between; gap:8px}
+  .poststock-card{background:var(--surface); border:1px solid var(--line-soft); border-radius:11px; margin:8px 0; padding:12px 14px}
+  .poststock-card.reserved{opacity:0.85; border-style:dashed}
+  .poststock-card .poststock-top{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px}
+  .poststock-card .poststock-frame{font:600 11px/1 var(--mono); color:var(--accent); background:rgba(245,165,36,.12); border:1px solid rgba(245,165,36,.3); border-radius:6px; padding:3px 7px}
+  .poststock-card .poststock-exp{font:11px/1.35 var(--mono); color:var(--muted)}
+  .poststock-card .poststock-body{font-size:13.5px; line-height:1.55; color:var(--text); white-space:pre-wrap; word-break:break-word; margin:8px 0 12px; background:var(--bg); border:1px solid var(--line-soft); border-radius:8px; padding:10px}
+  .poststock-card .poststock-actions{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+  .poststock-card .poststock-actions a{text-decoration:none; display:inline-flex; align-items:center}
+  .poststock-status-box{background:var(--surface); border:1px solid var(--line-soft); border-radius:8px; padding:14px; text-align:center; color:var(--muted); margin:8px 0}
+  .poststock-error-box{background:var(--surface); border:1px solid var(--late); border-radius:8px; padding:14px; text-align:center; color:var(--late); margin:8px 0}
+  .poststock-empty{background:var(--surface); border:1px dashed var(--line-soft); border-radius:8px; padding:14px; text-align:center; color:var(--muted); margin:8px 0}
+
   /* ===== PC / 広い画面 ===== */
   @media (min-width: 768px){
     .wrap{ max-width: 960px; }
@@ -152,7 +167,8 @@
     .stream > .seclabel,
     .stream > .nowline,
     .stream > .empty,
-    .stream > .sempty{ grid-column: 1 / -1; }
+    .stream > .sempty,
+    .stream > .poststock-section{ grid-column: 1 / -1; }
     /* gapで間隔を作るのでカード個別marginは消す */
     .stream > .card, .stream > .scard{ margin: 0; }
   }
@@ -191,6 +207,7 @@
   <div class="stream" id="stream"></div>
 </div>
 
+<script src="poststock.js"></script>
 <script>
 (() => {
   "use strict";
@@ -277,6 +294,9 @@
 
   let TASKS=[]; let doneOpen=false;
   let STANDBY=[]; let view="tasks";
+  let qualifiedState = { status: "absent", data: null, error: null };
+  let lastStandbyFetchTime = 0;
+  let standbyFetchInFlight = null;
 
   function render(){
     const stream=$("#stream"); stream.innerHTML="";
@@ -402,13 +422,10 @@
   }
   const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-  // background＝起動時の自動ロード。届くのが遅れ、その間に別のタブ（スタンバイ・taskgraf・チャット）へ移っていたら、
-  // 表示は奪わずにデータだけ入れる（タスクのタブを押した時に描く）。ファイル・貼り付け・サンプルは従来どおりタスクを出す。
   function load(text, background){ TASKS=parse(text); doneOpen=false;
     if(background && view!=="tasks") return;
     setView("tasks"); render(); }
 
-  // ===== ポスト化スタンバイ（層B＝あとは書くだけ）。タスクとは別パース・別描画 =====
   function setView(v){ view=v;
     document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on", t.dataset.view===v));
     document.querySelector(".wrap").classList.toggle("v-standby", v==="standby"); }
@@ -444,8 +461,21 @@
   function renderStandby(){
     const stream=$("#stream"); stream.innerHTML="";
     $("#pname").textContent="ポスト化スタンバイ"; $("#ptoday").textContent="今日 "+fmtMD(today);
+
+    if (typeof PostStock !== "undefined" && PostStock.renderSection) {
+      const qSection = PostStock.renderSection(qualifiedState, {
+        now: Math.floor(Date.now() / 1000),
+        onReload: () => fetchStandby(true),
+        document: document
+      });
+      if (qSection) stream.appendChild(qSection);
+    }
+
     if(!STANDBY.length){
-      stream.innerHTML='<div class="sempty">スタンバイがありません。<br>Drive「00_ポスト化スタンバイ.md」の <code>## スタンバイ一覧</code> を <code>standby.md</code> に反映してください。</div>';
+      const emp = document.createElement("div");
+      emp.className = "sempty";
+      emp.textContent = "スタンバイがありません。";
+      stream.appendChild(emp);
       return;
     }
     const ready=STANDBY.filter(isReady), rest=STANDBY.filter(s=>!isReady(s));
@@ -460,7 +490,44 @@
       stream.appendChild(lab); rest.forEach(s=>stream.appendChild(scard(s)));
     }
   }
-  function loadStandby(text){ STANDBY=parseStandby(text); if(view==="standby") renderStandby(); }
+  function loadStandby(text){
+    STANDBY=parseStandby(text);
+    if (typeof PostStock !== "undefined" && PostStock.parse) {
+      try {
+        const parsed = PostStock.parse(text);
+        if (parsed) {
+          qualifiedState = { status: "ready", data: parsed, error: null };
+        } else {
+          qualifiedState = { status: "absent", data: null, error: null };
+        }
+      } catch (err) {
+        qualifiedState = { status: "error", data: null, error: err.message || String(err) };
+      }
+    }
+    if(view==="standby") renderStandby();
+  }
+
+  async function fetchStandby(force = false) {
+    const now = Date.now();
+    if (standbyFetchInFlight) return standbyFetchInFlight;
+    if (!force && (now - lastStandbyFetchTime < 10000)) return;
+    lastStandbyFetchTime = now;
+    const ssrc = new URLSearchParams(location.search).get("standby") || "https://drive-snippets-mcp.gooooerer.workers.dev/pub/poststock";
+    standbyFetchInFlight = (async () => {
+      try {
+        const r = await fetch(ssrc);
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const t = await r.text();
+        loadStandby(t);
+      } catch (e) {
+        qualifiedState = { status: "error", data: null, error: e.message || String(e) };
+        if (view === "standby") renderStandby();
+      } finally {
+        standbyFetchInFlight = null;
+      }
+    })();
+    return standbyFetchInFlight;
+  }
 
   $("#stream").addEventListener("click", e=>{
     if(e.target.closest("a")) return;
@@ -470,7 +537,26 @@
   $("#tabs").addEventListener("click", e=>{
     const b=e.target.closest(".tab"); if(!b) return;
     setView(b.dataset.view);
-    if(view==="standby") renderStandby(); else render();
+    if(view==="standby") {
+      renderStandby();
+      fetchStandby();
+    } else {
+      render();
+    }
+  });
+
+  window.addEventListener("focus", () => {
+    if (view === "standby") {
+      renderStandby();
+      fetchStandby();
+    }
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && view === "standby") {
+      renderStandby();
+      fetchStandby();
+    }
   });
 
   $("#file").addEventListener("change",e=>{ const f=e.target.files[0]; if(!f) return;
@@ -484,11 +570,7 @@
   $("#btnApply").addEventListener("click",()=>{ const v=$("#ta").value.trim(); if(v) load(v); $("#pastePanel").classList.remove("open"); });
   $("#btnSample").addEventListener("click",()=>{ $("#ta").value=SAMPLE; load(SAMPLE); });
 
-  // ポスト化スタンバイは Drive を直読み（drive-snippets Worker の公開GET口 /pub/poststock 経由＝手動ミラー廃止）。?standby=URL で上書き可。
-  (async ()=>{
-    const ssrc=new URLSearchParams(location.search).get("standby") || "https://drive-snippets-mcp.gooooerer.workers.dev/pub/poststock";
-    try{ const r=await fetch(ssrc); if(r.ok){ const t=await r.text(); if(/\|/.test(t)) loadStandby(t); } }catch(e){}
-  })();
+  fetchStandby();
 
   (async ()=>{
     const src=new URLSearchParams(location.search).get("src") || "tasks.md"; // 既定で同repoのtasks.mdを読む
