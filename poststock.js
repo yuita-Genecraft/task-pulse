@@ -11,6 +11,7 @@
 
   const BEGIN_MARKER = "<!--TOKA_QUALIFIED_STOCK_V1_BEGIN-->";
   const END_MARKER = "<!--TOKA_QUALIFIED_STOCK_V1_END-->";
+  const VERIFIED_LABEL = "【検証済】";
   const ID_RE = /^[0-9a-f]{24}$/;
   const PS_ID_RE = /^ps[0-9]{2,}$/;
   const SHA_RE = /^[0-9a-f]{64}$/;
@@ -101,6 +102,9 @@
       if (item.psId !== undefined) {
         validItem.psId = item.psId;
       }
+      if (item.verified === true && item.verifiedLabel === VERIFIED_LABEL) {
+        validItem.verified = true;
+      }
 
       validItems.push(validItem);
     }
@@ -164,6 +168,13 @@
 
     const top = doc.createElement("div");
     top.className = "poststock-top";
+
+    if (item.verified === true) {
+      const verified = doc.createElement("span");
+      verified.className = "poststock-verified";
+      verified.textContent = VERIFIED_LABEL;
+      top.appendChild(verified);
+    }
 
     const ps = doc.createElement("span");
     ps.className = "poststock-ps";
@@ -313,6 +324,7 @@
   return {
     BEGIN_MARKER,
     END_MARKER,
+    VERIFIED_LABEL,
     ID_RE,
     PS_ID_RE,
     SHA_RE,
