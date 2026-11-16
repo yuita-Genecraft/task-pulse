@@ -426,6 +426,7 @@
   function load(text, background){ TASKS=parse(text); doneOpen=false;
     if(background && view!=="tasks") return;
     setView("tasks"); render(); }
+  window.load = load;
 
   function setView(v){ view=v;
     document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on", t.dataset.view===v));
@@ -585,5 +586,6 @@
 <script src="chatgpt.js" defer></script>
 <script src="autonomy.js" defer></script>
 <script src="factory-tab.js" defer></script>
+<script src="progress.js" defer></script>
 </body>
 </html>
