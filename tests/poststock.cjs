@@ -478,4 +478,254 @@ describe("PostStock Unit and Integration Tests", () => {
       dom.window.close();
     }
   });
+
+  test("6. verified property parsing, DOM rendering, XSS resilience, and aggregation neutrality", () => {
+    // 1. parse tests:
+    // (a) verified=true + correct label -> items[0].verified === true
+    const validVerifiedBlock = [
+      "<!--TOKA_QUALIFIED_STOCK_V1_BEGIN-->",
+      JSON.stringify({
+        version: 1,
+        syncedAt: 1794020000,
+        items: [
+          {
+            id: "1234567890abcdef12345678",
+            psId: "ps60",
+            frame: "技",
+            state: "qualified",
+            body: "Verified valid body",
+            bodySha256: "0".repeat(64),
+            expiresAt: Math.floor(Date.now() / 1000) + 86400,
+            imageUrl: "https://drive.google.com/file/d/DRIVE_FILE_ID_1/view",
+            verified: true,
+            verifiedLabel: "【検証済】"
+          }
+        ]
+      }),
+      "<!--TOKA_QUALIFIED_STOCK_V1_END-->"
+    ].join("\n");
+    const parsedValid = PostStock.parse(validVerifiedBlock);
+    assert.ok(parsedValid);
+    assert.equal(parsedValid.items[0].verified, true);
+
+    // (b) missing keys (legacy item) -> verified is undefined and not in object
+    const missingKeysBlock = [
+      "<!--TOKA_QUALIFIED_STOCK_V1_BEGIN-->",
+      JSON.stringify({
+        version: 1,
+        syncedAt: 1794020000,
+        items: [
+          {
+            id: "1234567890abcdef12345678",
+            psId: "ps61",
+            frame: "枠",
+            state: "qualified",
+            body: "Legacy item without verified keys",
+            bodySha256: "0".repeat(64),
+            expiresAt: Math.floor(Date.now() / 1000) + 86400,
+            imageUrl: "https://drive.google.com/file/d/DRIVE_FILE_ID_1/view"
+          }
+        ]
+      }),
+      "<!--TOKA_QUALIFIED_STOCK_V1_END-->"
+    ].join("\n");
+    const parsedMissing = PostStock.parse(missingKeysBlock);
+    assert.ok(parsedMissing);
+    assert.equal(parsedMissing.items[0].verified, undefined);
+    assert.equal("verified" in parsedMissing.items[0], false);
+
+    // (c) invalid verified variants do not throw, and verified is not attached, while sibling items and other fields are read normally
+    const invalidVariants = [
+      { verified: "true", verifiedLabel: "【検証済】" },
+      { verified: 1, verifiedLabel: "【検証済】" },
+      { verified: false, verifiedLabel: "【検証済】" },
+      { verified: true, verifiedLabel: "【検証】" },
+      { verifiedLabel: "【検証済】" }, // label only
+      { verified: true }, // verified only
+      { verified: true, verifiedLabel: "<img src=x onerror=alert(1)>" } // XSS attempt in label
+    ];
+
+    for (const variant of invalidVariants) {
+      const block = [
+        "<!--TOKA_QUALIFIED_STOCK_V1_BEGIN-->",
+        JSON.stringify({
+          version: 1,
+          syncedAt: 1794020000,
+          items: [
+            Object.assign({
+              id: "1234567890abcdef12345678",
+              psId: "ps62",
+              frame: "型",
+              state: "qualified",
+              body: "Variant item body",
+              bodySha256: "0".repeat(64),
+              expiresAt: Math.floor(Date.now() / 1000) + 86400,
+              imageUrl: "https://drive.google.com/file/d/DRIVE_FILE_ID_1/view"
+            }, variant),
+            {
+              id: "abcdef1234567890abcdef12",
+              psId: "ps63",
+              frame: "技",
+              state: "qualified",
+              body: "Sibling valid item body",
+              bodySha256: "0".repeat(64),
+              expiresAt: Math.floor(Date.now() / 1000) + 86400,
+              imageUrl: "https://drive.google.com/file/d/DRIVE_FILE_ID_2/view"
+            }
+          ]
+        }),
+        "<!--TOKA_QUALIFIED_STOCK_V1_END-->"
+      ].join("\n");
+
+      let parsedVariant;
+      assert.doesNotThrow(() => {
+        parsedVariant = PostStock.parse(block);
+      });
+      assert.ok(parsedVariant);
+      assert.equal(parsedVariant.items.length, 2, "Both items preserved");
+      assert.equal(parsedVariant.items[0].verified, undefined);
+      assert.equal("verified" in parsedVariant.items[0], false);
+      assert.equal(parsedVariant.items[0].body, "Variant item body");
+      assert.equal(parsedVariant.items[1].verified, undefined);
+      assert.equal("verified" in parsedVariant.items[1], false);
+      assert.equal(parsedVariant.items[1].body, "Sibling valid item body");
+    }
+
+    // 2. render tests:
+    const dom = new JSDOM("<!doctype html><html><body></body></html>");
+    const doc = dom.window.document;
+
+    // (a) verified item card: top's first child is .poststock-verified with textContent "【検証済】"
+    const verifiedItem = {
+      id: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      psId: "ps70",
+      frame: "技",
+      state: "qualified",
+      body: "Verified card body with <b>formatting</b>",
+      bodySha256: "0".repeat(64),
+      expiresAt: 2000000000,
+      imageUrl: "https://drive.google.com/file/d/DRIVE_FILE_ID_1/view",
+      verified: true
+    };
+    const verifiedCard = PostStock.renderCard(verifiedItem, doc);
+    const topEl = verifiedCard.querySelector(".poststock-top");
+    assert.ok(topEl);
+    assert.equal(topEl.firstElementChild.className, "poststock-verified");
+    assert.equal(topEl.firstElementChild.textContent, "【検証済】");
+    assert.equal(topEl.firstElementChild.nextElementSibling.className, "poststock-ps");
+    assert.equal(topEl.firstElementChild.nextElementSibling.textContent, "PS70");
+
+    // Body is unchanged
+    const bodyEl = verifiedCard.querySelector(".poststock-body");
+    assert.ok(bodyEl);
+    assert.equal(bodyEl.textContent, "Verified card body with <b>formatting</b>");
+
+    // (b) unverified item card: no .poststock-verified element in card, top's first child is .poststock-ps
+    const unverifiedItem = {
+      id: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      psId: "ps71",
+      frame: "枠",
+      state: "qualified",
+      body: "Unverified card body",
+      bodySha256: "0".repeat(64),
+      expiresAt: 2000000000,
+      imageUrl: "https://drive.google.com/file/d/DRIVE_FILE_ID_1/view"
+    };
+    const unverifiedCard = PostStock.renderCard(unverifiedItem, doc);
+    assert.equal(unverifiedCard.querySelector(".poststock-verified"), null);
+    const unverifiedTop = unverifiedCard.querySelector(".poststock-top");
+    assert.ok(unverifiedTop);
+    assert.equal(unverifiedTop.firstElementChild.className, "poststock-ps");
+    assert.equal(unverifiedTop.firstElementChild.textContent, "PS71");
+
+    // (c) label with <img onerror>: text is constant "【検証済】" only, no img element added
+    const maliciousItem = {
+      id: "cccccccccccccccccccccccc",
+      psId: "ps72",
+      frame: "型",
+      state: "qualified",
+      body: "Item body unchanged",
+      bodySha256: "0".repeat(64),
+      expiresAt: 2000000000,
+      imageUrl: "https://drive.google.com/file/d/DRIVE_FILE_ID_1/view",
+      verified: true,
+      verifiedLabel: '<img src="x" onerror="alert(1)">'
+    };
+    const maliciousCard = PostStock.renderCard(maliciousItem, doc);
+    const maliciousVerifiedSpan = maliciousCard.querySelector(".poststock-verified");
+    assert.ok(maliciousVerifiedSpan);
+    assert.equal(maliciousVerifiedSpan.textContent, "【検証済】");
+    assert.equal(maliciousCard.querySelectorAll("img").length, 0, "No <img> element rendered from malicious label");
+    assert.equal(maliciousCard.querySelector(".poststock-body").textContent, "Item body unchanged");
+
+    // 3. aggregation neutrality test: counts (reserved & available) are unaffected by verified flag
+    const now = 1794000000;
+    const mixedData = {
+      version: 1,
+      syncedAt: now,
+      items: [
+        {
+          id: "111111111111111111111111",
+          psId: "ps81",
+          frame: "技",
+          state: "qualified",
+          body: "Qualified unverified",
+          bodySha256: "0".repeat(64),
+          expiresAt: now + 3600,
+          imageUrl: "https://drive.google.com/file/d/ID1/view"
+        },
+        {
+          id: "222222222222222222222222",
+          psId: "ps82",
+          frame: "枠",
+          state: "qualified",
+          body: "Qualified verified",
+          bodySha256: "0".repeat(64),
+          expiresAt: now + 3600,
+          imageUrl: "https://drive.google.com/file/d/ID2/view",
+          verified: true
+        },
+        {
+          id: "333333333333333333333333",
+          psId: "ps83",
+          frame: "型",
+          state: "reserved",
+          body: "Reserved unverified",
+          bodySha256: "0".repeat(64),
+          expiresAt: now + 3600,
+          imageUrl: "https://drive.google.com/file/d/ID3/view"
+        },
+        {
+          id: "444444444444444444444444",
+          psId: "ps84",
+          frame: "型",
+          state: "reserved",
+          body: "Reserved verified",
+          bodySha256: "0".repeat(64),
+          expiresAt: now + 3600,
+          imageUrl: "https://drive.google.com/file/d/ID4/view",
+          verified: true
+        }
+      ]
+    };
+
+    const section = PostStock.renderSection({ status: "ready", data: mixedData }, { document: doc, now });
+    const header = section.querySelector(".poststock-header");
+    assert.ok(header.textContent.includes("選べる完成稿 2本／目標3本"), "Available count remains exactly 2");
+
+    const reservedLabel = section.querySelector(".seclabel:not(.poststock-header)");
+    assert.ok(reservedLabel);
+    assert.ok(reservedLabel.textContent.includes("2"), "Reserved count remains exactly 2");
+
+    const cards = section.querySelectorAll(".poststock-card");
+    assert.equal(cards.length, 4, "Total 4 active cards rendered");
+
+    // Check verified badges on rendered cards
+    assert.equal(cards[0].querySelector(".poststock-verified"), null);
+    assert.ok(cards[1].querySelector(".poststock-verified"));
+    assert.equal(cards[2].querySelector(".poststock-verified"), null);
+    assert.ok(cards[3].querySelector(".poststock-verified"));
+
+    dom.window.close();
+  });
 });
