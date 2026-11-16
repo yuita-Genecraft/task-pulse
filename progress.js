@@ -58,17 +58,28 @@
   // cc-jobs が node に足す pr（題・merge の状態）。形が違えば無い物として扱う（嘘の表示を作らない）。
   const PR_STATES = new Set(["OPEN", "MERGED", "CLOSED"]);
   const ISO_UTC = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/;
+  // 暦に無い日付（2026-02-30・2026-99-99）を通さない：読み戻して年月日時分秒が同じか確かめる
+  function realIso(str) {
+    if (typeof str !== "string") return false;
+    const m = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.\d{1,3})?Z$/.exec(str);
+    if (!m) return false;
+    const d = new Date(str);
+    if (!Number.isFinite(d.getTime())) return false;
+    return d.getUTCFullYear() === +m[1] && d.getUTCMonth() + 1 === +m[2] && d.getUTCDate() === +m[3] && d.getUTCHours() === +m[4] && d.getUTCMinutes() === +m[5] && d.getUTCSeconds() === +m[6];
+  }
+
   function validPr(p) {
     if (!p || typeof p !== "object" || Array.isArray(p)) return null;
     if (typeof p.title !== "string" || !p.title.trim() || p.title.length > 120) return null;
     if (!PR_STATES.has(p.state)) return null;
-    if (typeof p.checkedAt !== "string" || !ISO_UTC.test(p.checkedAt) || !Number.isFinite(Date.parse(p.checkedAt))) return null;
+    if (!realIso(p.checkedAt)) return null;
     let mergedAt = null;
     if (p.mergedAt !== null && p.mergedAt !== undefined) {
-      if (typeof p.mergedAt !== "string" || !ISO_UTC.test(p.mergedAt) || !Number.isFinite(Date.parse(p.mergedAt))) return null;
+      if (!realIso(p.mergedAt)) return null;
       mergedAt = p.mergedAt;
     }
     if (p.state === "MERGED" && !mergedAt) return null;
+    if (p.state !== "MERGED" && mergedAt) return null; // 送り手の約束：mergedAt は MERGED の時だけ
     return { title: p.title, state: p.state, mergedAt, checkedAt: p.checkedAt };
   }
 
@@ -300,14 +311,31 @@
 
   let seq = 0;
 
+  const onTasksTab = () => {
+    const on = document.querySelector(".tab.on");
+    return !on || on.dataset.view === "tasks";
+  };
+
+  // 鍵が無くなった時：取得中の応答を無効にし、出ていた題（private）を消して元の表（tasks.md／サンプル）へ戻す
+  function dropLive() {
+    seq++;
+    banner.hidden = true;
+    banner.textContent = "";
+    if (window.__liveTasks) {
+      window.__liveTasks = false;
+      if (typeof window.__baseText === "string" && typeof window.load === "function") window.load(window.__baseText, true);
+    }
+  }
+
   async function refresh() {
     const key = readKey();
     if (!key) {
-      banner.hidden = true;
-      banner.textContent = "";
+      dropLive();
       return;
     }
     const mySeq = ++seq;
+    // 取得の最中に、別のタブへ移った・鍵が外れた・鍵が替わった時は、この応答を捨てる
+    const stale = () => mySeq !== seq || readKey() !== key || !onTasksTab();
     try {
       const res = await fetch(EVENTS_URL, {
         method: "GET",
@@ -318,14 +346,13 @@
       });
       if (!res.ok) throw new Error("events fetch failed");
       const data = await res.json();
-      if (!data || typeof data !== "object" || !data.snapshot) throw new Error("invalid snapshot");
-      if (mySeq !== seq) return;
-
-      if (mySeq !== seq) return;
+      if (!data || typeof data !== "object" || !data.snapshot || typeof data.snapshot !== "object" || !Array.isArray(data.snapshot.nodes)) throw new Error("invalid snapshot");
+      if (stale()) return;
 
       const rows = buildRows(data.snapshot);
       const md = toMarkdown(rows);
 
+      window.__liveTasks = true; // 遅れて届く tasks.md が live の表を上書きしない（index.html が見る）
       if (typeof window.load === "function") {
         window.load(md);
       } else if (typeof load === "function") {
@@ -337,7 +364,7 @@
       const t = data.received_at ? new Date(data.received_at) : new Date();
       banner.textContent = "取得 " + fmt(isNaN(t.getTime()) ? new Date() : t) + "（merge の状態は各行の確認時刻の時点）";
     } catch {
-      if (mySeq !== seq) return;
+      if (stale()) return;
       banner.className = "progress-status error";
       banner.hidden = false;
       banner.textContent = "取得に失敗";
@@ -351,8 +378,14 @@
       if (banner.textContent) banner.hidden = false;
       void refresh();
     } else {
+      seq++; // 取得中の応答を捨てる（タブを戻さない・帯を出さない）
       banner.hidden = true;
     }
+  });
+
+  window.addEventListener("hashchange", () => {
+    if (!readKey()) dropLive();
+    else void refresh();
   });
 
   // Initial load

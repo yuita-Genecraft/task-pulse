@@ -25,7 +25,7 @@ test.afterEach(() => {
 
 const tick = (w, n = 20) => new Promise((r) => (function loop(i) { i ? w.setTimeout(() => loop(i - 1), 0) : r(); })(n));
 
-function page({ hash = "", serveEvents, serveGithub } = {}) {
+function page({ hash = "", serveEvents, serveGithub, serveTasks } = {}) {
   let html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
   // Replace script tags with inlined script content
   html = html.replace(/<script\s+(?:defer\s+)?src="([^"]+)"(?:\s+defer)?><\/script>/g, (_, f) => {
@@ -57,6 +57,7 @@ function page({ hash = "", serveEvents, serveGithub } = {}) {
           return { ok: false, status: 404, json: async () => null, text: async () => "" };
         }
         if (u.endsWith("tasks.md")) {
+          if (serveTasks) return serveTasks();
           return { ok: true, status: 200, text: async () => SAMPLE_TASKS_MD };
         }
         return { ok: false, status: 404, json: async () => null, text: async () => "" };
@@ -270,4 +271,88 @@ test("round は title の「第N回」、無ければ attempt の -rN-", () => {
   n.title = "審査 repo";
   n.attempt = "codex-review-20261116-ccj-pr1-r4-9440f33";
   assert.deepEqual(descOf([n]), ["審査 PASS（4回目）・merge の状態は不明（取れていない）"]);
+});
+
+
+// ---- r2：Codex r1 の指摘①〜⑤（先に赤を見てから直した試験） ----
+const later = (w, ms) => new Promise((r) => w.setTimeout(r, ms));
+const okEvents = (snap) => ({ ok: true, status: 200, json: async () => ({ received_at: "2026-11-16T12:00:00.000Z", snapshot: snap }) });
+const liveSnap = (title) => ({ nodes: [withPr(N("o__r-1", { state: "done", reason: "PASS" }), PR("OPEN", { title, checkedAt: new Date().toISOString() }))] });
+
+test("R2-1: tasks.md の取得が live の表より後に届いても、live の表を上書きしない", async () => {
+  let releaseTasks;
+  const gate = new Promise((r) => (releaseTasks = r));
+  const { w, d } = page({
+    hash: "#graph=k",
+    serveEvents: () => okEvents(liveSnap("ライブの題R2-1")),
+    serveTasks: async () => { await gate; return { ok: true, status: 200, text: async () => SAMPLE_TASKS_MD }; },
+  });
+  await tick(w, 25);
+  assert.ok(d.body.textContent.includes("ライブの題R2-1"), "live が先に出る");
+  releaseTasks();
+  await tick(w, 25);
+  assert.ok(d.body.textContent.includes("ライブの題R2-1"), "遅れて届いた tasks.md が live を消した");
+});
+
+test("R2-2: 取得中に別のタブへ移ったら、応答が来てもタブを戻さず帯も出さない（失敗の時も）", async () => {
+  for (const mode of ["ok", "fail"]) {
+    let release;
+    const gate = new Promise((r) => (release = r));
+    const { w, d } = page({ hash: "#graph=k", serveEvents: async () => { await gate; return mode === "ok" ? okEvents(liveSnap("題R2-2")) : { ok: false, status: 500, json: async () => null }; } });
+    await tick(w, 10);
+    d.querySelector('.tab[data-view="standby"]').click();
+    await tick(w, 5);
+    release();
+    await tick(w, 25);
+    assert.equal(d.querySelector(".tab.on").dataset.view, "standby", mode + ": タブが tasks に戻された");
+    assert.equal(d.getElementById("progressStatus").hidden, true, mode + ": 別のタブで帯が出た");
+  }
+});
+
+test("R2-3: 鍵を外したら、取得中の応答の題を出さない・すでに出た題は消える", async () => {
+  // (a) 取得中に鍵を外す
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const a = page({ hash: "#graph=k", serveEvents: async () => { await gate; return okEvents(liveSnap("秘密の題R2-3a")); } });
+  await tick(a.w, 10);
+  a.w.location.hash = "";
+  await tick(a.w, 5);
+  release();
+  await tick(a.w, 25);
+  assert.ok(!a.d.body.textContent.includes("秘密の題R2-3a"), "鍵を外した後に private の題が出た");
+  // (b) 出た後に鍵を外す
+  const b = page({ hash: "#graph=k", serveEvents: () => okEvents(liveSnap("秘密の題R2-3b")) });
+  await tick(b.w, 25);
+  assert.ok(b.d.body.textContent.includes("秘密の題R2-3b"));
+  b.w.location.hash = "";
+  await tick(b.w, 25);
+  assert.ok(!b.d.body.textContent.includes("秘密の題R2-3b"), "鍵を外しても出た題が残った");
+  assert.ok(b.d.body.textContent.includes("Sample"), "元の表に戻る");
+});
+
+test("R2-4: 形の壊れた成功応答は、既存の表を消さずに「取得に失敗」", async () => {
+  for (const bad of [{ snapshot: true }, { snapshot: { nodes: "invalid" } }, { snapshot: {} }, { snapshot: [] }]) {
+    const { w, d } = page({ hash: "#graph=k", serveEvents: () => ({ ok: true, status: 200, json: async () => bad }) });
+    await tick(w, 25);
+    assert.equal(d.getElementById("progressStatus").textContent, "取得に失敗", JSON.stringify(bad));
+    assert.ok(d.body.textContent.includes("Sample"), "既存の表が消えた " + JSON.stringify(bad));
+  }
+});
+
+test("R2-5: node.pr は OPEN／CLOSED に mergedAt があれば不正・暦に無い日付（2026-02-30・2026-99-99）は不正", () => {
+  const bads = [
+    PR("OPEN", { mergedAt: "2026-11-14T12:00:00Z" }),
+    PR("CLOSED", { mergedAt: "2026-11-14T12:00:00Z" }),
+    PR("MERGED", { mergedAt: "2026-02-30T12:00:00Z" }),
+    PR("MERGED", { mergedAt: "2026-99-99T99:99:99Z" }),
+    PR("OPEN", { checkedAt: "2026-02-30T12:00:00Z" }),
+    PR("OPEN", { checkedAt: "2026-11-31T00:00:00Z" }),
+  ];
+  for (const b of bads) {
+    const rows = prRows([withPr(N("o__r-1", { state: "done", reason: "PASS" }), b)]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].task, "PR #1（題なし）", JSON.stringify(b));
+  }
+  const ok = prRows([withPr(N("o__r-1", { state: "done", reason: "PASS" }), PR("OPEN", { title: "正しい題" }))]);
+  assert.equal(ok[0].task, "正しい題");
 });
