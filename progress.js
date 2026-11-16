@@ -323,7 +323,9 @@
     banner.textContent = "";
     if (window.__liveTasks) {
       window.__liveTasks = false;
-      if (typeof window.__baseText === "string" && typeof window.load === "function") window.load(window.__baseText, true);
+      // 元の表（tasks.md／サンプル）がまだ届いていなければ、空の表を置いて題を消す（届いたら index.html がそれを表示する）
+      const base = typeof window.__baseText === "string" ? window.__baseText : toMarkdown([]);
+      if (typeof window.load === "function") window.load(base, true);
     }
   }
 

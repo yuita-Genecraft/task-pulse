@@ -356,3 +356,22 @@ test("R2-5: node.pr は OPEN／CLOSED に mergedAt があれば不正・暦に�
   const ok = prRows([withPr(N("o__r-1", { state: "done", reason: "PASS" }), PR("OPEN", { title: "正しい題" }))]);
   assert.equal(ok[0].task, "正しい題");
 });
+
+test("R3-1: live が遅い tasks.md より先に出た後に鍵を外すと、private の題は消え、後から届く tasks.md は表示される", async () => {
+  let releaseTasks;
+  const gate = new Promise((r) => (releaseTasks = r));
+  const { w, d } = page({
+    hash: "#graph=k",
+    serveEvents: () => okEvents(liveSnap("秘密の題R3-1")),
+    serveTasks: async () => { await gate; return { ok: true, status: 200, text: async () => SAMPLE_TASKS_MD }; },
+  });
+  await tick(w, 25);
+  assert.ok(d.body.textContent.includes("秘密の題R3-1"));
+  w.location.hash = "";
+  await tick(w, 25);
+  assert.ok(!d.body.textContent.includes("秘密の題R3-1"), "base が未取得の時に鍵を外すと題が残った");
+  releaseTasks();
+  await tick(w, 25);
+  assert.ok(d.body.textContent.includes("Sample"), "遅れて届いた tasks.md が表示される");
+  assert.ok(!d.body.textContent.includes("秘密の題R3-1"));
+});
