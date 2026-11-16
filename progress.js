@@ -1,5 +1,5 @@
 // progress.js — Task Pulse「タスク」タブの自動進行状況。
-// 鍵（#graph=…）がある時、handoff の GET /factory/events と GitHub REST から最新の進捗を取得し、
+// 鍵（#graph=…）がある時、handoff の GET /factory/events（cc-jobs が足した node.pr＝PR の題・merge の状態を含む）から最新の進捗を取得し、
 // markdown 表に変換してタスク一覧を更新する。鍵が無い時は tasks.md のまま。
 (() => {
   "use strict";
@@ -50,8 +50,26 @@
     else if (state === "failed") d = "審査が失敗";
     else if (state === "running") d = round ? `審査中（${roundStr}）` : "審査中";
     else if (state === "queued" || state === "waiting") d = "審査待ち";
-    if (opts.privateNote) d = d ? `${d}・merge の状態は非公開のため不明` : "merge の状態は非公開のため不明";
+    if (opts.unknownMerge) d = d ? `${d}・merge の状態は不明（取れていない）` : "merge の状態は不明（取れていない）";
+    else if (opts.checkedAt) d = d ? `${d}・確認 ${fmt(new Date(opts.checkedAt))}` : `確認 ${fmt(new Date(opts.checkedAt))}`;
     return d;
+  }
+
+  // cc-jobs が node に足す pr（題・merge の状態）。形が違えば無い物として扱う（嘘の表示を作らない）。
+  const PR_STATES = new Set(["OPEN", "MERGED", "CLOSED"]);
+  const ISO_UTC = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/;
+  function validPr(p) {
+    if (!p || typeof p !== "object" || Array.isArray(p)) return null;
+    if (typeof p.title !== "string" || !p.title.trim() || p.title.length > 120) return null;
+    if (!PR_STATES.has(p.state)) return null;
+    if (typeof p.checkedAt !== "string" || !ISO_UTC.test(p.checkedAt) || !Number.isFinite(Date.parse(p.checkedAt))) return null;
+    let mergedAt = null;
+    if (p.mergedAt !== null && p.mergedAt !== undefined) {
+      if (typeof p.mergedAt !== "string" || !ISO_UTC.test(p.mergedAt) || !Number.isFinite(Date.parse(p.mergedAt))) return null;
+      mergedAt = p.mergedAt;
+    }
+    if (p.state === "MERGED" && !mergedAt) return null;
+    return { title: p.title, state: p.state, mergedAt, checkedAt: p.checkedAt };
   }
 
   function parsePrReviews(snapshot) {
@@ -77,6 +95,7 @@
           verdict: null,
           round: null,
           findings: null,
+          pr_info: null,
           stale: false,
           state: null,
           observedAt: null,
@@ -88,6 +107,8 @@
         entry.state = item.state;
       }
       if (item.stale === true) entry.stale = true;
+      const pi = validPr(item.pr);
+      if (pi) entry.pr_info = pi;
       if (item.verdict && typeof item.verdict === "string") {
         entry.verdict = item.verdict.toUpperCase();
       } else if (item.reason && typeof item.reason === "string") {
@@ -138,12 +159,12 @@
     return prMap;
   }
 
-  function buildRows(snapshot, ghData, options = {}) {
+  function buildRows(snapshot, options = {}) {
     const now = typeof options.now === "number" ? options.now : (options.now ? Date.parse(options.now) : Date.now());
     const prMap = parsePrReviews(snapshot);
     if (prMap.size === 0) return [];
 
-    // Group by repository: "owner/repo" -> array of PR review records
+    // repo ごとにまとめる："owner/repo" -> PR の審査の記録
     const repos = new Map();
     for (const pr of prMap.values()) {
       const repoKey = `${pr.owner}/${pr.repo}`;
@@ -151,7 +172,6 @@
       repos.get(repoKey).push(pr);
     }
 
-    // Sort repository keys alphabetically for consistency
     const sortedRepoKeys = Array.from(repos.keys()).sort();
     const rows = [];
     let parentNo = 0;
@@ -159,64 +179,34 @@
     for (const repoKey of sortedRepoKeys) {
       const prList = repos.get(repoKey).sort((a, b) => a.pr - b.pr);
 
-      // Lookup GitHub data for this repo
-      let ghPulls = null;
-      if (ghData) {
-        if (typeof ghData.get === "function") {
-          ghPulls = ghData.get(repoKey);
-        } else if (repoKey in ghData) {
-          ghPulls = ghData[repoKey];
-        }
-      }
-      const ghMap = new Map();
-      if (Array.isArray(ghPulls)) {
-        for (const p of ghPulls) {
-          if (p && Number.isSafeInteger(p.number)) {
-            ghMap.set(p.number, p);
-          }
-        }
-      }
-
       const childRows = [];
       for (const prReview of prList) {
-        const ghPr = ghMap.get(prReview.pr);
+        const info = prReview.pr_info;
         let status = "";
         let doneAt = "";
         let ki = "";
         let title = "";
-        let privateRow = false;
 
-        if (ghPr) {
-          title = sanitizeText(ghPr.title);
-          if (ghPr.created_at) ki = toDateString(ghPr.created_at);
-
-          if (ghPr.merged_at) {
-            const mergedMs = Date.parse(ghPr.merged_at);
-            const diffMs = now - mergedMs;
-            if (diffMs > SEVEN_DAYS_MS) {
-              // 7日より前の merged は出さない
-              continue;
-            }
-            status = "完了";
-            doneAt = toDateString(ghPr.merged_at);
-          } else if (ghPr.state === "closed") {
-            // closed で merged でないものは出さない
-            continue;
-          } else {
-            // open
+        if (info) {
+          title = sanitizeText(info.title);
+          if (info.state === "OPEN") {
             status = "進行中";
+          } else if (info.state === "MERGED") {
+            if (now - Date.parse(info.mergedAt) > SEVEN_DAYS_MS) continue; // 7日より前の merged は出さない
+            status = "完了";
+            doneAt = toDateString(info.mergedAt);
+          } else {
+            continue; // merge されずに閉じた物は出さない
           }
         } else {
-          // GitHub 404 (private) or failed fetch
-          // merge 済みかどうかが分からないので、7日より前に最後に動いた行は進行中と偽らず出さない
+          // 題も merge の状態も取れていない行。merge 済みか分からないので、7日より前に最後に動いた行は進行中と偽らず出さない
           if (!prReview.observedAt || now - prReview.observedAt > SEVEN_DAYS_MS) continue;
-          title = `PR #${prReview.pr}（題は非公開）`;
+          title = `PR #${prReview.pr}（題なし）`;
           ki = toDateString(prReview.observedAt);
           status = "進行中";
-          privateRow = true;
         }
 
-        const desc = formatDesc(prReview, { privateNote: privateRow });
+        const desc = formatDesc(prReview, info ? { checkedAt: info.checkedAt } : { unknownMerge: true });
         childRows.push({
           isParent: false,
           pr: prReview.pr,
@@ -308,30 +298,6 @@
   banner.hidden = true;
   stream.insertAdjacentElement("beforebegin", banner);
 
-  // GitHub の公開データだけを5分、sessionStorage に置く（未認証の rate limit＝60回/時を、タブの押し直しで使い切らないため）。鍵・events の中身は置かない。
-  const GH_CACHE_MS = 5 * 60 * 1000;
-  function readGhCache(repo) {
-    try {
-      const raw = sessionStorage.getItem("tp-gh-pulls:" + repo);
-      if (!raw) return null;
-      const o = JSON.parse(raw);
-      if (!o || typeof o.at !== "number" || Date.now() - o.at > GH_CACHE_MS) return null;
-      return { pulls: Array.isArray(o.pulls) ? o.pulls : null };
-    } catch {
-      return null;
-    }
-  }
-  function writeGhCache(repo, pulls) {
-    try {
-      const slim = Array.isArray(pulls)
-        ? pulls.map((p) => ({ number: p.number, title: p.title, state: p.state, merged_at: p.merged_at, created_at: p.created_at }))
-        : null;
-      sessionStorage.setItem("tp-gh-pulls:" + repo, JSON.stringify({ at: Date.now(), pulls: slim }));
-    } catch {
-      /* 保存できなくても動く */
-    }
-  }
-
   let seq = 0;
 
   async function refresh() {
@@ -355,49 +321,9 @@
       if (!data || typeof data !== "object" || !data.snapshot) throw new Error("invalid snapshot");
       if (mySeq !== seq) return;
 
-      const prMap = parsePrReviews(data.snapshot);
-      const uniqueRepos = new Set();
-      for (const pr of prMap.values()) {
-        uniqueRepos.add(`${pr.owner}/${pr.repo}`);
-      }
-
-      const ghByRepo = new Map();
-      await Promise.all(
-        Array.from(uniqueRepos).map(async (repoFullName) => {
-          const cached = readGhCache(repoFullName);
-          if (cached) {
-            ghByRepo.set(repoFullName, cached.pulls);
-            return;
-          }
-          try {
-            const ghRes = await fetch(
-              `https://api.github.com/repos/${repoFullName}/pulls?state=all&sort=updated&direction=desc&per_page=30`,
-              {
-                method: "GET",
-                credentials: "omit",
-                referrerPolicy: "no-referrer",
-                headers: { Accept: "application/vnd.github.v3+json" },
-              }
-            );
-            if (ghRes.ok) {
-              const pulls = await ghRes.json();
-              if (Array.isArray(pulls)) {
-                ghByRepo.set(repoFullName, pulls);
-                writeGhCache(repoFullName, pulls);
-                return;
-              }
-            }
-            ghByRepo.set(repoFullName, null);
-            writeGhCache(repoFullName, null);
-          } catch {
-            ghByRepo.set(repoFullName, null);
-          }
-        })
-      );
-
       if (mySeq !== seq) return;
 
-      const rows = buildRows(data.snapshot, ghByRepo);
+      const rows = buildRows(data.snapshot);
       const md = toMarkdown(rows);
 
       if (typeof window.load === "function") {
@@ -409,7 +335,7 @@
       banner.className = "progress-status";
       banner.hidden = false;
       const t = data.received_at ? new Date(data.received_at) : new Date();
-      banner.textContent = "取得 " + fmt(isNaN(t.getTime()) ? new Date() : t);
+      banner.textContent = "取得 " + fmt(isNaN(t.getTime()) ? new Date() : t) + "（merge の状態は各行の確認時刻の時点）";
     } catch {
       if (mySeq !== seq) return;
       banner.className = "progress-status error";

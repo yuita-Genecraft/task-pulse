@@ -76,151 +76,119 @@ test("AC1: 鍵なし＝fetch しない", async () => {
   assert.equal(relevant.length, 0, "no fetch calls to events or github when no key");
 });
 
-test("AC2: 鍵あり＝/factory/events に Bearer を付けて1回、repo ごとに GitHub を1回", async () => {
+const NOW0 = Date.parse("2026-11-16T12:00:00Z");
+// cc-jobs が node に足す pr（題・merge の状態）
+const PR = (state, o = {}) => ({ title: o.title === undefined ? "題 " + state : o.title, state, mergedAt: o.mergedAt === undefined ? (state === "MERGED" ? "2026-11-14T12:00:00Z" : null) : o.mergedAt, checkedAt: o.checkedAt || "2026-11-16T11:30:00Z" });
+const withPr = (node, pr) => Object.assign(node, { pr });
+const prRows = (nodes, opts = { now: NOW0 }) => P.buildRows({ nodes }, opts).filter((r) => !r.isParent);
+
+test("AC2: 鍵あり＝/factory/events に Bearer を付けて1回・api.github.com は一度も呼ばない", async () => {
   const KEY = "my-secret-key-12345";
   const SNAP = {
     nodes: [
-      N("ownerA__repo1-1", { state: "running" }),
-      N("ownerA__repo1-2", { state: "done", reason: "PASS" }),
+      withPr(N("ownerA__repo1-1", { state: "running" }), PR("OPEN")),
+      withPr(N("ownerA__repo1-2", { state: "done", reason: "PASS" }), PR("MERGED")),
       N("ownerB__repo2-1", { state: "failed", reason: "BLOCK 指摘2件" }),
     ],
     edges: [],
     source: { kind: "execution-events", graphGeneratedAt: "2026-11-16T00:00:00.000Z" },
   };
-
   const { w, calls } = page({
     hash: `#graph=${KEY}`,
     serveEvents: (init) => {
       assert.equal(init.headers.authorization, "Bearer " + KEY);
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ received_at: "2026-11-16T10:00:00.000Z", snapshot: SNAP }),
-      };
-    },
-    serveGithub: (_url, init) => {
-      assert.ok(!init.headers.authorization, "GitHub call has no auth token");
-      return {
-        ok: true,
-        status: 200,
-        json: async () => [],
-      };
+      return { ok: true, status: 200, json: async () => ({ received_at: "2026-11-16T10:00:00.000Z", snapshot: SNAP }) };
     },
   });
-
   await tick(w, 25);
-
   const eventCalls = calls.filter((c) => c.url.includes("factory/events"));
-  assert.equal(eventCalls.length, 1, "exactly 1 call to /factory/events with Bearer key");
+  assert.equal(eventCalls.length, 1);
   assert.equal(eventCalls[0].headers.authorization, "Bearer " + KEY);
-
-  const ghCalls = calls.filter((c) => c.url.includes("api.github.com"));
-  assert.equal(ghCalls.length, 2, "exactly 1 call per unique repo (ownerA/repo1 and ownerB/repo2)");
-  assert.ok(ghCalls.some((c) => c.url.includes("ownerA/repo1/pulls")));
-  assert.ok(ghCalls.some((c) => c.url.includes("ownerB/repo2/pulls")));
+  assert.equal(calls.filter((c) => c.url.includes("api.github.com") || c.url.includes("github.com/")).length, 0, "GitHub は呼ばない");
 });
 
-test("AC3: open→進行中・7日以内 merged→完了・それ以外は出ない", () => {
-  const now = Date.parse("2026-11-16T12:00:00.000Z");
-  const SNAP = {
-    nodes: [
-      N("test-org__app-1", { state: "running" }),
-      N("test-org__app-2", { state: "done", reason: "PASS" }),
-      N("test-org__app-3", { state: "done", reason: "PASS" }),
-      N("test-org__app-4", { state: "failed", reason: "終了コード 1" }),
-    ],
-  };
-  const ghPulls = [
-    { number: 1, title: "PR1 Open", state: "open", merged_at: null, created_at: "2026-11-15T00:00:00Z" },
-    { number: 2, title: "PR2 Merged 3d ago", state: "closed", merged_at: "2026-11-13T12:00:00Z", created_at: "2026-11-10T00:00:00Z" },
-    { number: 3, title: "PR3 Merged 10d ago", state: "closed", merged_at: "2026-11-06T12:00:00Z", created_at: "2026-11-05T00:00:00Z" },
-    { number: 4, title: "PR4 Closed Not Merged", state: "closed", merged_at: null, created_at: "2026-11-12T00:00:00Z" },
-  ];
-  const ghData = { "test-org/app": ghPulls };
-  const rows = P.buildRows(SNAP, ghData, { now });
-  const prRows = rows.filter((r) => !r.isParent);
-
-  // Only PR 1 and PR 2 should appear
-  assert.equal(prRows.length, 2);
-  assert.equal(prRows[0].task, "PR1 Open");
-  assert.equal(prRows[0].status, "進行中");
-  assert.equal(prRows[0].doneAt, "");
-
-  assert.equal(prRows[1].task, "PR2 Merged 3d ago");
-  assert.equal(prRows[1].status, "完了");
-  assert.equal(prRows[1].doneAt, "2026-11-13");
+test("AC3: OPEN→進行中・MERGED(3日前)→完了＋完了日・MERGED(10日前)→出ない・CLOSED→出ない", () => {
+  const rows = prRows([
+    withPr(N("o__r-1"), PR("OPEN", { title: "開いている" })),
+    withPr(N("o__r-2", { state: "done", reason: "PASS" }), PR("MERGED", { title: "3日前に merge", mergedAt: "2026-11-13T12:00:00Z" })),
+    withPr(N("o__r-3", { state: "done", reason: "PASS" }), PR("MERGED", { title: "10日前に merge", mergedAt: "2026-11-06T12:00:00Z" })),
+    withPr(N("o__r-4"), PR("CLOSED", { title: "閉じただけ" })),
+  ]);
+  assert.deepEqual(rows.map((r) => r.task), ["開いている", "3日前に merge"]);
+  assert.equal(rows[0].status, "進行中");
+  assert.equal(rows[1].status, "完了");
+  assert.equal(rows[1].doneAt, "2026-11-13");
 });
 
-test("AC4: private（404）の行は題が「非公開」で、審査の状態は出る", () => {
-  const SNAP = {
-    nodes: [
-      N("secret-org__hidden-repo-42", { state: "failed", round: 2, reason: "BLOCK 指摘3件" }),
-    ],
-  };
-  // GitHub returns 404 / null for private repo
-  const ghData = { "secret-org/hidden-repo": null };
-  const rows = P.buildRows(SNAP, ghData, { now: Date.parse("2026-11-16T12:00:00Z") });
-  const prRows = rows.filter((r) => !r.isParent);
-  assert.equal(prRows.length, 1);
-  assert.equal(prRows[0].task, "PR #42（題は非公開）");
-  assert.equal(prRows[0].status, "進行中");
-  assert.equal(prRows[0].desc, "審査 BLOCK（2回目・指摘3件）・merge の状態は非公開のため不明");
+test("AC4: node.pr が無い行は「PR #N（題なし）」・7日以内だけ・説明に「merge の状態は不明」", () => {
+  const rows = prRows([
+    N("o__r-1", { state: "failed", reason: "BLOCK 指摘3件", round: 2, at: NOW0 - 86400000 }),
+    N("o__r-2", { state: "done", reason: "PASS", at: NOW0 - 8 * 86400000 }),
+    N("o__r-3", { state: "done", reason: "PASS", at: null }),
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].task, "PR #1（題なし）");
+  assert.equal(rows[0].status, "進行中");
+  assert.equal(rows[0].desc, "審査 BLOCK（2回目・指摘3件）・merge の状態は不明（取れていない）");
+  assert.ok(!rows[0].desc.includes("非公開"));
 });
 
-test("AC5: | や改行を含む title が表を壊さない", () => {
-  const SNAP = {
-    nodes: [
-      N("test-org__repo-1", { state: "running" }),
-    ],
-  };
-  const ghData = {
-    "test-org/repo": [
-      { number: 1, title: "fix(ui): table | split | bar\r\nand linebreaks\nshould be clean", state: "open", merged_at: null },
-    ],
-  };
-  const rows = P.buildRows(SNAP, ghData);
+test("AC5: 題の | と改行で表が壊れない", () => {
+  const rows = P.buildRows({ nodes: [withPr(N("test-org__repo-1"), PR("OPEN", { title: "fix(ui): table | split | bar\r\nand linebreaks\nshould be clean" }))] }, { now: NOW0 });
   const md = P.toMarkdown(rows);
-
   const lines = md.split("\n").filter((l) => l.startsWith("|"));
-  assert.ok(lines.length >= 3); // header + divider + parent + child
+  assert.ok(lines.length >= 3);
   for (const line of lines) {
-    const cols = line.replace(/^\||\|$/g, "").split("|");
-    assert.equal(cols.length, 10, "each row must have exactly 10 columns without stray pipes");
-    assert.ok(!line.includes("\n"), "no raw newlines in markdown line");
-    assert.ok(!line.includes("\r"), "no raw carriage returns in markdown line");
+    assert.equal(line.replace(/^\||\|$/g, "").split("|").length, 10, "each row has exactly 10 columns");
+    assert.ok(!line.includes("\n") && !line.includes("\r"));
   }
-  // Title should have fullwidth ｜ instead of ASCII |
   assert.ok(md.includes("fix(ui): table ｜ split ｜ bar and linebreaks should be clean"));
 });
 
+test("AC5b: node.pr の形が不正（state・title・checkedAt・mergedAt）なら無い扱い", () => {
+  const bad = [
+    PR("OPEN", { title: 5 }),
+    PR("OPEN", { title: "" }),
+    PR("OPEN", { title: "x".repeat(121) }),
+    { title: "t", state: "open", mergedAt: null, checkedAt: "2026-11-16T11:30:00Z" },
+    { title: "t", state: "OPEN", mergedAt: null, checkedAt: "yesterday" },
+    { title: "t", state: "MERGED", mergedAt: null, checkedAt: "2026-11-16T11:30:00Z" },
+    { title: "t", state: "MERGED", mergedAt: "not-a-time", checkedAt: "2026-11-16T11:30:00Z" },
+    "string",
+    [],
+  ];
+  for (const b of bad) {
+    const rows = prRows([withPr(N("o__r-1", { state: "done", reason: "PASS" }), b)]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].task, "PR #1（題なし）", JSON.stringify(b));
+  }
+});
+
 test("AC6: 取得失敗で既存の表のまま", async () => {
-  const { w, d } = page({
-    hash: "#graph=some-key",
-    serveEvents: () => ({ ok: false, status: 500, json: async () => null }),
-  });
+  const { w, d } = page({ hash: "#graph=some-key", serveEvents: () => ({ ok: false, status: 500, json: async () => null }) });
   await tick(w, 25);
   const banner = d.getElementById("progressStatus");
   assert.ok(banner);
   assert.equal(banner.hidden, false);
   assert.equal(banner.textContent, "取得に失敗");
-  // Previous table (tasks.md or sample) remains intact
-  const cards = d.querySelectorAll(".card");
-  assert.ok(cards.length > 0, "previous task cards still exist");
+  assert.ok(d.querySelectorAll(".card").length > 0, "previous task cards still exist");
 });
 
-test("AC7: pure 関数（buildRows／toMarkdown）が node で呼べる", () => {
+test("AC6b: 成功すると帯に取得時刻と「確認時刻の時点」が出て、説明に確認時刻が出る", async () => {
+  const snap = { nodes: [withPr(N("o__r-1", { state: "done", reason: "PASS" }), PR("OPEN", { title: "進行中の題", checkedAt: "2026-11-16T11:30:00Z" }))] };
+  const { w, d } = page({ hash: "#graph=k", serveEvents: () => ({ ok: true, status: 200, json: async () => ({ received_at: "2026-11-16T12:00:00.000Z", snapshot: snap }) }) });
+  await tick(w, 25);
+  assert.match(d.getElementById("progressStatus").textContent, /^取得 11\/16 21:00（merge の状態は各行の確認時刻の時点）$/);
+  assert.ok(d.body.textContent.includes("進行中の題"));
+  assert.ok(d.body.textContent.includes("確認 11/16 20:30"));
+});
+
+test("AC7: 純関数（buildRows／toMarkdown）が node で呼べる", () => {
   assert.equal(typeof P.buildRows, "function");
   assert.equal(typeof P.toMarkdown, "function");
-  const rows = P.buildRows(
-    { nodes: [N("a__b-1", { state: "running" })] },
-    { "a/b": [{ number: 1, title: "Test", state: "open" }] }
-  );
-  assert.ok(Array.isArray(rows));
+  const rows = P.buildRows({ nodes: [withPr(N("a__b-1"), PR("OPEN", { title: "Test" }))] }, { now: NOW0 });
   const md = P.toMarkdown(rows);
-  assert.ok(typeof md === "string");
-  assert.ok(md.includes("| No | タスク |"));
-  assert.ok(md.includes("a/b"));
-  assert.ok(md.includes("Test"));
+  assert.ok(md.includes("| No | タスク |") && md.includes("a/b") && md.includes("Test"));
 });
 
 test("秘密の形: 大小文字・%エンコードされた鍵が console/DOM/localStorage/エラーメッセージに出ない", async () => {
@@ -280,9 +248,9 @@ test("秘密の形: 大小文字・%エンコードされた鍵が console/DOM/l
   }
 });
 
-// ---- 実物の形の説明・private の古い行・stale・GitHub の5分の置き場 ----
-const NOW = Date.parse("2026-11-16T12:00:00Z");
-const descOf = (nodes, gh = {}) => P.buildRows({ nodes }, gh, { now: NOW }).filter((r) => !r.isParent).map((r) => r.desc);
+
+// ---- 実物の形の説明 ----
+const descOf = (nodes) => prRows(nodes).map((r) => r.desc);
 
 test("説明：PASS／BLOCK 指摘1件／failed 終了コード／審査中／stale は実物の reason と title から。P0/P1 とは書かない", () => {
   const d = descOf([
@@ -292,13 +260,8 @@ test("説明：PASS／BLOCK 指摘1件／failed 終了コード／審査中／st
     N("o__r-4", { state: "running", round: 1 }),
     N("o__r-5", { state: "unknown", stale: true, reason: "PASS" }),
   ]);
-  assert.deepEqual(d, [
-    "審査 PASS（3回目）・merge の状態は非公開のため不明",
-    "審査 BLOCK（2回目・指摘1件）・merge の状態は非公開のため不明",
-    "審査が失敗・merge の状態は非公開のため不明",
-    "審査中（1回目）・merge の状態は非公開のため不明",
-    "審査の記録が古い・merge の状態は非公開のため不明",
-  ]);
+  const u = "・merge の状態は不明（取れていない）";
+  assert.deepEqual(d, ["審査 PASS（3回目）" + u, "審査 BLOCK（2回目・指摘1件）" + u, "審査が失敗" + u, "審査中（1回目）" + u, "審査の記録が古い" + u]);
   assert.ok(!d.join("").includes("P0/P1"));
 });
 
@@ -306,44 +269,5 @@ test("round は title の「第N回」、無ければ attempt の -rN-", () => {
   const n = N("o__r-1", { state: "done", reason: "PASS" });
   n.title = "審査 repo";
   n.attempt = "codex-review-20261116-ccj-pr1-r4-9440f33";
-  assert.deepEqual(descOf([n]), ["審査 PASS（4回目）・merge の状態は非公開のため不明"]);
-});
-
-test("private（GitHub が取れない）：7日より前に最後に動いた行は出ない・7日以内は出る", () => {
-  const old = N("o__r-1", { state: "done", reason: "PASS", at: NOW - 8 * 86400000 });
-  const fresh = N("o__r-2", { state: "done", reason: "PASS", at: NOW - 6 * 86400000 });
-  const none = N("o__r-3", { state: "done", reason: "PASS", at: null });
-  const rows = P.buildRows({ nodes: [old, fresh, none] }, { "o/r": null }, { now: NOW }).filter((r) => !r.isParent);
-  assert.deepEqual(rows.map((r) => r.pr), [2]);
-});
-
-test("public（GitHub が取れる）：審査の記録が古くても open は進行中・題は GitHub の title", () => {
-  const old = N("o__r-1", { state: "done", reason: "PASS", at: NOW - 30 * 86400000 });
-  const rows = P.buildRows({ nodes: [old] }, { "o/r": [{ number: 1, title: "公開の題", state: "open", merged_at: null }] }, { now: NOW }).filter((r) => !r.isParent);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].task, "公開の題");
-  assert.equal(rows[0].status, "進行中");
-  assert.ok(!rows[0].desc.includes("非公開"));
-});
-
-test("GitHub の取得結果は5分 sessionStorage に置かれ、2回目の開きでは GitHub を引かない（鍵・events は置かない）", async () => {
-  const KEY = "cachekey-abcdef";
-  const snap = { nodes: [N("o__r-1", { state: "done", reason: "PASS" })] };
-  const serve = {
-    hash: `#graph=${KEY}`,
-    serveEvents: () => ({ ok: true, status: 200, json: async () => ({ received_at: "2026-11-16T10:00:00.000Z", snapshot: snap }) }),
-    serveGithub: () => ({ ok: true, status: 200, json: async () => [{ number: 1, title: "T", state: "open", merged_at: null, extra: "drop" }] }),
-  };
-  const first = page(serve);
-  await tick(first.w, 25);
-  assert.equal(first.calls.filter((c) => c.url.includes("api.github.com")).length, 1);
-  const stored = Object.entries(Object.assign({}, first.w.sessionStorage)).filter(([k]) => k.startsWith("tp-gh-pulls:"));
-  assert.equal(stored.length, 1);
-  assert.ok(!stored[0][1].includes(KEY) && !stored[0][1].includes("extra"));
-  // 同じ window で、タブを押し直す
-  first.calls.length = 0;
-  first.d.querySelector('#tabs .tab[data-view="tasks"]').click();
-  await tick(first.w, 25);
-  assert.equal(first.calls.filter((c) => c.url.includes("api.github.com")).length, 0, "5分の間は GitHub を引かない");
-  assert.equal(first.calls.filter((c) => c.url.includes("factory/events")).length, 1, "events は毎回取り直す");
+  assert.deepEqual(descOf([n]), ["審査 PASS（4回目）・merge の状態は不明（取れていない）"]);
 });
