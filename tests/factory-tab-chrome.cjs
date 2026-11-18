@@ -63,7 +63,8 @@ test("in real Chrome: the factory iframe is cut off from the parent, storage and
     }
     let html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
     html = html.replace(/<script src="([^"]+)"(?: defer)?><\/script>/g, (_, f) => {
-      let code = fs.readFileSync(path.join(ROOT, f), "utf8");
+      // progress.js（「タスク」タブの進行状況）はこの試験の対象外＝同じ /factory/events を読むので外す（自分の試験は tests/progress.cjs）
+      let code = f === "progress.js" ? "" : fs.readFileSync(path.join(ROOT, f), "utf8");
       if (f === "factory-tab.js") {
         code = code.replace("https://handoff-mcp.gooooerer.workers.dev/factory/", `http://127.0.0.1:${port}/factory/`);
         for (const [name, buf] of Object.entries(FILES)) code = code.replace(new RegExp(`("${name.replace(/[./]/g, "\\$&")}": ")[0-9a-f]{64}(")`), `$1${sha(buf)}$2`);

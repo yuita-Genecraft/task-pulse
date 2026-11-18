@@ -426,6 +426,7 @@
   function load(text, background){ TASKS=parse(text); doneOpen=false;
     if(background && view!=="tasks") return;
     setView("tasks"); render(); }
+  window.load = load;
 
   function setView(v){ view=v;
     document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on", t.dataset.view===v));
@@ -575,7 +576,8 @@
 
   (async ()=>{
     const src=new URLSearchParams(location.search).get("src") || "tasks.md"; // 既定で同repoのtasks.mdを読む
-    try{ const r=await fetch(src); if(r.ok){ const txt=await r.text(); if(/\|/.test(txt)){ load(txt, true); return; } } }catch(e){}
+    try{ const r=await fetch(src); if(r.ok){ const txt=await r.text(); if(/\|/.test(txt)){ window.__baseText=txt; if(window.__liveTasks) return; load(txt, true); return; } } }catch(e){}
+    window.__baseText=SAMPLE; if(window.__liveTasks) return; // 先に live の表が出ていたら、遅れた tasks.md／サンプルで上書きしない
     $("#ta").value=SAMPLE; load(SAMPLE, true); // tasks.mdが無ければサンプル表示
   })();
 })();
@@ -585,5 +587,6 @@
 <script src="chatgpt.js" defer></script>
 <script src="autonomy.js" defer></script>
 <script src="factory-tab.js" defer></script>
+<script src="progress.js" defer></script>
 </body>
 </html>

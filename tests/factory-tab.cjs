@@ -44,7 +44,8 @@ test.afterEach(() => {
 function page({ hash = `#graph=${KEY}`, serve } = {}) {
   let html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
   html = html.replace(/<script src="([^"]+)"(?: defer)?><\/script>/g, (_, f) => {
-    const code = f === "factory-tab.js" ? testSource() : fs.readFileSync(path.join(ROOT, f), "utf8");
+    // progress.js（「タスク」タブの進行状況）はこの試験の対象外＝同じ /factory/events を読むので外す（自分の試験は tests/progress.cjs）
+    const code = f === "progress.js" ? "" : f === "factory-tab.js" ? testSource() : fs.readFileSync(path.join(ROOT, f), "utf8");
     return `<script>${code.replace(/<\/script/g, "<\\/script")}</script>`;
   });
   const calls = [];
