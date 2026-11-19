@@ -115,7 +115,7 @@ test("AC3: OPEN→進行中・MERGED(3日前)→完了＋完了日・MERGED(10�
     withPr(N("o__r-3", { state: "done", reason: "PASS" }), PR("MERGED", { title: "10日前に merge", mergedAt: "2026-11-06T12:00:00Z" })),
     withPr(N("o__r-4"), PR("CLOSED", { title: "閉じただけ" })),
   ]);
-  assert.deepEqual(rows.map((r) => r.task), ["開いている", "3日前に merge"]);
+  assert.deepEqual(rows.map((r) => r.task), ["#1 開いている", "#2 3日前に merge"]);
   assert.equal(rows[0].status, "進行中");
   assert.equal(rows[1].status, "完了");
   assert.equal(rows[1].doneAt, "2026-11-13");
@@ -354,7 +354,7 @@ test("R2-5: node.pr は OPEN／CLOSED に mergedAt があれば不正・暦に�
     assert.equal(rows[0].task, "PR #1（題なし）", JSON.stringify(b));
   }
   const ok = prRows([withPr(N("o__r-1", { state: "done", reason: "PASS" }), PR("OPEN", { title: "正しい題" }))]);
-  assert.equal(ok[0].task, "正しい題");
+  assert.equal(ok[0].task, "#1 正しい題");
 });
 
 test("R3-1: live が遅い tasks.md より先に出た後に鍵を外すと、private の題は消え、後から届く tasks.md は表示される", async () => {
@@ -374,4 +374,60 @@ test("R3-1: live が遅い tasks.md より先に出た後に鍵を外すと、pr
   await tick(w, 25);
   assert.ok(d.body.textContent.includes("Sample"), "遅れて届いた tasks.md が表示される");
   assert.ok(!d.body.textContent.includes("秘密の題R3-1"));
+});
+
+test("PR番号プレフィックスと【目的】の抽出", () => {
+  // (a) info がある行の task は "#N 題"、題なしの行は "PR #N（題なし）"
+  const rowsA = prRows([
+    withPr(N("o__r-25"), PR("OPEN", { title: "タスクタブにPR番号" })),
+    N("o__r-26", { at: NOW0 - 86400000 }),
+  ]);
+  assert.equal(rowsA[0].task, "#25 タスクタブにPR番号");
+  assert.equal(rowsA[1].task, "PR #26（題なし）");
+  assert.equal(rowsA[1].purpose, "開発");
+
+  // (b) 題が【タスク渋滞解消】で始まる → purpose が "タスク渋滞解消"、task は【…】つきのまま
+  const rowsB = prRows([withPr(N("o__r-10"), PR("OPEN", { title: "【タスク渋滞解消】PR一覧を整理" }))]);
+  assert.equal(rowsB[0].purpose, "タスク渋滞解消");
+  assert.equal(rowsB[0].task, "#10 【タスク渋滞解消】PR一覧を整理");
+
+  // (c) 【】が無い → "開発"
+  const rowsC = prRows([withPr(N("o__r-11"), PR("OPEN", { title: "通常の題" }))]);
+  assert.equal(rowsC[0].purpose, "開発");
+
+  // (d) 【】の中身が空（【】題）→ "開発"
+  const rowsD = prRows([withPr(N("o__r-12"), PR("OPEN", { title: "【】題" }))]);
+  assert.equal(rowsD[0].purpose, "開発");
+
+  // (d2) 【】の中が空白だけ（【 】題）→ "開発"（空白の目的を出さない）
+  const rowsD2 = prRows([withPr(N("o__r-99"), PR("OPEN", { title: "【 】題" }))]);
+  assert.equal(rowsD2[0].purpose, "開発");
+
+  // (e) 題の途中に【x】がある（先頭でない）→ "開発"
+  const rowsE = prRows([withPr(N("o__r-13"), PR("OPEN", { title: "前に文字【x】題" }))]);
+  assert.equal(rowsE[0].purpose, "開発");
+
+  // (f) 閉じの】が無い（【目的だけ）→ "開発"
+  const rowsF = prRows([withPr(N("o__r-14"), PR("OPEN", { title: "【目的だけ" }))]);
+  assert.equal(rowsF[0].purpose, "開発");
+
+  // (g) 題や purpose に | や改行があっても表（toMarkdown）が壊れない
+  const rowsG = P.buildRows(
+    { nodes: [withPr(N("o__r-15"), PR("OPEN", { title: "【目的|A\nB】題|1\r\n2" }))] },
+    { now: NOW0 }
+  );
+  const childG = rowsG.find((r) => !r.isParent);
+  assert.equal(childG.purpose, "目的｜A B");
+  assert.equal(childG.task, "#15 【目的｜A B】題｜1 2");
+  const mdG = P.toMarkdown(rowsG);
+  const mdLines = mdG.split("\n").filter((l) => l.startsWith("|"));
+  assert.equal(mdLines.length, 4);
+  for (const line of mdLines) {
+    assert.equal(line.replace(/^\||\|$/g, "").split("|").length, 10);
+    assert.ok(!line.includes("\n") && !line.includes("\r"));
+  }
+
+  // (h) 親の行の purpose は "開発"
+  const parentG = rowsG.find((r) => r.isParent);
+  assert.equal(parentG.purpose, "開発");
 });
