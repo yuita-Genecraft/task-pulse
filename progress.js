@@ -197,9 +197,15 @@
         let doneAt = "";
         let ki = "";
         let title = "";
+        let purpose = "開発";
 
         if (info) {
-          title = sanitizeText(info.title);
+          const cleanTitle = sanitizeText(info.title);
+          title = `#${prReview.pr} ${cleanTitle}`;
+          const m = /^【([^】]+)】/.exec(cleanTitle);
+          if (m && m[1].trim()) {
+            purpose = m[1].trim();
+          }
           if (info.state === "OPEN") {
             status = "進行中";
           } else if (info.state === "MERGED") {
@@ -226,7 +232,7 @@
           ki,
           status,
           doneAt,
-          purpose: "開発",
+          purpose,
           core: "",
           desc,
           note: "",
